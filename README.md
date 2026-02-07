@@ -12,13 +12,11 @@
 
 Starting **August 2, 2026**, every company deploying AI systems in the EU must comply with the [EU AI Act](https://artificialintelligenceact.eu/) — or face fines up to **€35M or 7% of global turnover**.
 
-
-
 AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or LLM call with the compliance layer required by the EU AI Act:
 
 | EU AI Act Requirement | Article | AgentGuard Feature |
 |---|---|---|
-| Users must know they're talking to AI | Art. 50(1) | Automatic disclosure injection |
+| Users must know they're talking to AI | Art. 50(1) | Contextual smart disclosures (category-aware, multi-language) |
 | AI content must be machine-readable labeled | Art. 50(2) | Content labeling (C2PA-compatible) |
 | Interactions must be logged and auditable | Art. 12 | Structured audit logging (file/SQLite) |
 | Human oversight must be possible | Art. 14 | Automatic escalation + review queue |
@@ -185,6 +183,45 @@ print(response._agentguard["input_policy"])
 # {"blocked": True, "reason": "Input matched blocked category: weapons", ...}
 # LLM was never called — 0ms latency, $0 cost
 ```
+
+## Contextual Smart Disclosures (Article 50)
+
+Instead of a generic "you are talking to AI" message, AgentGuard adapts the disclosure based on detected content categories — in the user's language.
+
+```python
+guard = AgentGuard(
+    system_name="my-bot",
+    provider_name="My Company GmbH",
+    disclosure_method="prepend",       # or "metadata", "header"
+    disclosure_mode="contextual",      # "static" = same text always (default)
+    language="de",                     # en, de, fr, es, it built-in
+)
+```
+
+When the policy engine detects `medical` content, the user sees (in German):
+
+> Dies ist ein KI-System. Die bereitgestellten Informationen stellen keine medizinische Beratung dar. Bitte konsultieren Sie einen Arzt.
+
+Instead of a generic "You are talking to an AI."
+
+**Built-in languages:** English, German, French, Spanish, Italian — each with category-specific templates for medical, legal, financial, emotional simulation, and self-harm.
+
+```python
+# Override or add templates for any category/language
+guard = AgentGuard(
+    ...,
+    disclosure_mode="contextual",
+    language="pt",
+    disclosure_languages={
+        "pt": {
+            "default": "Voce esta interagindo com um sistema de IA ({system_name}).",
+            "medical": "Informacao nao constitui aconselhamento medico.",
+        },
+    },
+)
+```
+
+Multiple categories are combined automatically. If a query triggers both `medical` and `legal`, the user sees both disclosures.
 
 ## Human Oversight (Article 14)
 
@@ -439,8 +476,20 @@ guard = AgentGuard(
     intended_purpose="Customer support chatbot",
 
     # Transparency (Article 50)
-    disclosure_method="metadata",   # "prepend", "metadata", or "header"
+    disclosure_method="prepend",    # "prepend", "metadata", or "header"
+    disclosure_mode="contextual",   # "static" (default) or "contextual"
+    language="en",                  # en, de, fr, es, it (or add your own)
     label_content=True,             # Machine-readable content labels
+
+    # Content Policies (runtime enforcement)
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm"],
+        flag_categories=["medical", "legal", "financial"],
+    ),
+    output_policy=OutputPolicy(
+        scan_categories=["medical", "legal", "financial"],
+        add_disclaimer=True,
+    ),
 
     # Audit (Article 12)
     audit_backend="sqlite",         # "file", "sqlite", or "custom"
