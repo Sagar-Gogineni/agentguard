@@ -2,7 +2,7 @@
 
 **EU AI Act compliance middleware for AI agents. Make any LLM-powered agent legally deployable in Europe with 3 lines of code.**
 
-[![PyPI version](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![PyPI version](https://img.shields.io/pypi/v/agentguard-eu.svg)](https://pypi.org/project/agentguard-eu/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -27,7 +27,7 @@ AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or 
 ## Quick Start
 
 ```bash
-pip install agentguard
+pip install agentguard-eu
 ```
 
 ```python
@@ -140,7 +140,7 @@ Zero-effort compliance for popular LLM clients — wrap once, every call is comp
 ### OpenAI
 
 ```bash
-pip install "agentguard[openai]"
+pip install "agentguard-eu[openai]"
 ```
 
 ```python
@@ -176,7 +176,7 @@ print(stream._agentguard)  # available after iteration
 ### Azure OpenAI
 
 ```bash
-pip install "agentguard[openai]"
+pip install "agentguard-eu[openai]"
 ```
 
 ```python
@@ -202,7 +202,7 @@ response = client.chat.completions.create(
 ### Anthropic
 
 ```bash
-pip install "agentguard[anthropic]"
+pip install "agentguard-eu[anthropic]"
 ```
 
 ```python
@@ -224,7 +224,7 @@ print(message._agentguard["interaction_id"])  # compliance metadata
 ### LangChain
 
 ```bash
-pip install "agentguard[langchain]"
+pip install "agentguard-eu[langchain]"
 ```
 
 ```python
@@ -317,7 +317,7 @@ guard = AgentGuard(
 A Streamlit-based dashboard for Article 14 human oversight.
 
 ```bash
-pip install "agentguard[dashboard]"
+pip install "agentguard-eu[dashboard]"
 agentguard-dashboard --audit-path ./agentguard_audit
 ```
 

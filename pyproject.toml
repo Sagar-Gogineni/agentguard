@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentguard"
+name = "agentguard-eu"
 version = "0.1.0"
 description = "EU AI Act compliance middleware for AI agents. Make any LLM-powered agent legally deployable in Europe with 3 lines of code."
 readme = "README.md"
@@ -57,6 +57,9 @@ Documentation = "https://agentguard.dev"
 Repository = "https://github.com/Sagar-Gogineni/agentguard"
 Issues = "https://github.com/Sagar-Gogineni/agentguard/issues"
 Changelog = "https://github.com/Sagar-Gogineni/agentguard/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentguard"]
 
 [tool.ruff]
 target-version = "py310"
