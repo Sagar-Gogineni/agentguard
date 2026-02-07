@@ -27,11 +27,16 @@ from .config import (
     RiskLevel,
 )
 from .core import AgentGuard, EscalationTriggered
+from .wrappers.anthropic import wrap_anthropic
+from .wrappers.azure_openai import wrap_azure_openai
+from .wrappers.langchain import AgentGuardCallback
+from .wrappers.openai import wrap_openai
 
 __version__ = "0.1.0"
 
 __all__ = [
     "AgentGuard",
+    "AgentGuardCallback",
     "AgentGuardConfig",
     "AuditBackend",
     "ContentLabel",
@@ -39,4 +44,7 @@ __all__ = [
     "EscalationTriggered",
     "HumanEscalation",
     "RiskLevel",
+    "wrap_anthropic",
+    "wrap_azure_openai",
+    "wrap_openai",
 ]

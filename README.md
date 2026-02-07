@@ -132,6 +132,116 @@ print(guard.generate_report_markdown())
 
 Reports include: system identification, transparency configuration, human oversight settings, interaction statistics, and escalation history.
 
+## Provider Wrappers
+
+Zero-effort compliance for popular LLM clients — wrap once, every call is compliant.
+
+### OpenAI
+
+```bash
+pip install "agentguard[openai]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_openai
+from openai import OpenAI
+
+guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+client = wrap_openai(OpenAI(), guard)
+
+# Every call is now compliant — logged, disclosed, escalation-checked
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)  # unchanged
+print(response._agentguard["interaction_id"])  # compliance metadata
+```
+
+Streaming works too — chunks yield in real-time, compliance runs after the stream completes:
+
+```python
+stream = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+print(stream._agentguard)  # available after iteration
+```
+
+### Azure OpenAI
+
+```bash
+pip install "agentguard[openai]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_azure_openai
+from openai import AzureOpenAI
+
+guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+client = wrap_azure_openai(
+    AzureOpenAI(
+        azure_endpoint="https://my-resource.openai.azure.com",
+        api_version="2024-02-01",
+        api_key="...",
+    ),
+    guard,
+)
+
+response = client.chat.completions.create(
+    model="my-deployment",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+### Anthropic
+
+```bash
+pip install "agentguard[anthropic]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_anthropic
+from anthropic import Anthropic
+
+guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+client = wrap_anthropic(Anthropic(), guard)
+
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(message.content[0].text)  # unchanged
+print(message._agentguard["interaction_id"])  # compliance metadata
+```
+
+### LangChain
+
+```bash
+pip install "agentguard[langchain]"
+```
+
+```python
+from agentguard import AgentGuard, AgentGuardCallback
+from langchain_openai import ChatOpenAI  # or AzureChatOpenAI, ChatAnthropic, etc.
+
+guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+callback = AgentGuardCallback(guard, user_id="user-123")
+llm = ChatOpenAI(model="gpt-4", callbacks=[callback])
+
+response = llm.invoke("Hello!")
+print(response.content)
+print(callback.last_result)  # compliance metadata for most recent call
+print(callback.results)      # all runs keyed by run_id
+```
+
+Works with any LangChain LLM — ChatOpenAI, AzureChatOpenAI, ChatAnthropic, and more. Streaming is also supported automatically via the callback hooks.
+
 ## FastAPI Integration
 
 See [examples/fastapi_example.py](examples/fastapi_example.py) for a complete API with:
@@ -193,12 +303,11 @@ guard = AgentGuard(
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Priority areas:
-- LangChain/LangGraph native integration
-- OpenAI client wrapper
-- Anthropic client wrapper
 - Cloud audit backends (S3, BigQuery)
 - Dashboard UI for human review queue
 - C2PA standard implementation
+- Async support (ainvoke, async wrappers)
+- Webhook notifications for escalations
 
 ## License
 
