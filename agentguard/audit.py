@@ -24,9 +24,7 @@ class AuditEntry(BaseModel):
     """A single auditable AI interaction record."""
 
     interaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     system_name: str
     provider_name: str
 
@@ -206,19 +204,13 @@ class AuditLogger:
         cursor = self._db.execute("SELECT COUNT(*) FROM audit_log")
         stats["total_interactions"] = cursor.fetchone()[0]
 
-        cursor = self._db.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE human_escalated = 1"
-        )
+        cursor = self._db.execute("SELECT COUNT(*) FROM audit_log WHERE human_escalated = 1")
         stats["total_escalations"] = cursor.fetchone()[0]
 
-        cursor = self._db.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE error IS NOT NULL"
-        )
+        cursor = self._db.execute("SELECT COUNT(*) FROM audit_log WHERE error IS NOT NULL")
         stats["total_errors"] = cursor.fetchone()[0]
 
-        cursor = self._db.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE disclosure_shown = 1"
-        )
+        cursor = self._db.execute("SELECT COUNT(*) FROM audit_log WHERE disclosure_shown = 1")
         stats["disclosures_shown"] = cursor.fetchone()[0]
 
         cursor = self._db.execute("SELECT AVG(latency_ms) FROM audit_log")

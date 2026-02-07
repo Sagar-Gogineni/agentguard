@@ -44,7 +44,8 @@ def _extract_input(messages: list[dict[str, Any]], system: str | None = None) ->
                 break
             if isinstance(content, list):
                 parts = [
-                    p.get("text", "") for p in content
+                    p.get("text", "")
+                    for p in content
                     if isinstance(p, dict) and p.get("type") == "text"
                 ]
                 user_text = " ".join(parts)

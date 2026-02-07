@@ -42,7 +42,8 @@ def _extract_input(messages: list[dict[str, Any]]) -> str:
             # Handle content arrays (e.g. vision messages with text parts)
             if isinstance(content, list):
                 parts = [
-                    p.get("text", "") for p in content
+                    p.get("text", "")
+                    for p in content
                     if isinstance(p, dict) and p.get("type") == "text"
                 ]
                 return " ".join(parts)

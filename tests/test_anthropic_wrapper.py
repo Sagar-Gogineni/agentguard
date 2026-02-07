@@ -63,9 +63,7 @@ class MockRawStream:
         self._events.append(MockStreamEvent("message_start"))
         self._events.append(MockStreamEvent("content_block_start"))
         for chunk in text_chunks:
-            self._events.append(
-                MockStreamEvent("content_block_delta", delta=MockTextDelta(chunk))
-            )
+            self._events.append(MockStreamEvent("content_block_delta", delta=MockTextDelta(chunk)))
         self._events.append(MockStreamEvent("content_block_stop"))
         self._events.append(MockStreamEvent("message_delta"))
         self._events.append(MockStreamEvent("message_stop"))

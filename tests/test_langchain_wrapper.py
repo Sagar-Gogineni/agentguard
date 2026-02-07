@@ -141,7 +141,10 @@ class TestTextLLM:
         )
 
         assert str(run_id) in callback.results
-        assert callback.results[str(run_id)]["interaction_id"] == callback.last_result["interaction_id"]
+        assert (
+            callback.results[str(run_id)]["interaction_id"]
+            == callback.last_result["interaction_id"]
+        )
 
     def test_disclosure_headers_present(self, callback):
         run_id = make_run_id()
@@ -190,10 +193,12 @@ class TestChatModel:
 
         callback.on_chat_model_start(
             serialized=SERIALIZED_CHAT,
-            messages=[[
-                MockSystemMessage("You are helpful."),
-                MockHumanMessage("What is 2+2?"),
-            ]],
+            messages=[
+                [
+                    MockSystemMessage("You are helpful."),
+                    MockHumanMessage("What is 2+2?"),
+                ]
+            ],
             run_id=run_id,
         )
         callback.on_llm_end(
@@ -211,10 +216,12 @@ class TestChatModel:
 
         callback.on_chat_model_start(
             serialized=SERIALIZED_CHAT,
-            messages=[[
-                MockSystemMessage("You are a helpful assistant."),
-                MockHumanMessage("I need legal advice"),
-            ]],
+            messages=[
+                [
+                    MockSystemMessage("You are a helpful assistant."),
+                    MockHumanMessage("I need legal advice"),
+                ]
+            ],
             run_id=run_id,
         )
         callback.on_llm_end(
