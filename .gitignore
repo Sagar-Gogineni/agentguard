@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+
+# Linting
+.ruff_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# AgentGuard runtime artifacts
+agentguard_audit/
+*.db
+
+# Claude Code / Playbook
+CLAUDE.md
+CLAUDE_CODE_PLAYBOOK.md
