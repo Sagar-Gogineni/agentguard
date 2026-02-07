@@ -9,6 +9,8 @@ Run:
     uvicorn fastapi_example:app --reload
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -20,8 +22,8 @@ from agentguard import AgentGuard, EscalationTriggered
 # ------------------------------------------------------------------ #
 
 guard = AgentGuard(
-    system_name="acme-support-api",
-    provider_name="Acme Corp GmbH",
+    system_name="my-support-api",
+    provider_name="my-provider",
     risk_level="limited",
     intended_purpose="Customer support chatbot API for product inquiries",
     disclosure_method="metadata",  # Return disclosure as JSON metadata
@@ -32,10 +34,17 @@ guard = AgentGuard(
     block_on_escalation=False,  # Set True to block responses that need human review
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    guard.close()
+
+
 app = FastAPI(
-    title="Acme Support API (EU AI Act Compliant)",
+    title="Support API (EU AI Act Compliant)",
     description="Powered by AgentGuard compliance middleware",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -141,6 +150,3 @@ async def reject_review(interaction_id: str, reason: str = ""):
     raise HTTPException(404, "Interaction not found in review queue")
 
 
-@app.on_event("shutdown")
-async def shutdown():
-    guard.close()

@@ -8,7 +8,7 @@ Quick Start:
 
     guard = AgentGuard(
         system_name="my-chatbot",
-        provider_name="Acme Corp",
+        provider_name="my-provider",
     )
 
     result = guard.invoke(

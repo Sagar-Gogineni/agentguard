@@ -20,6 +20,7 @@ env/
 htmlcov/
 .tox/
 .nox/
+examples/generate_sample_data.py
 
 # Type checking
 .mypy_cache/

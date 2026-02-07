@@ -16,7 +16,7 @@ from agentguard import AgentGuard
 
 guard = AgentGuard(
     system_name="customer-support-bot",
-    provider_name="Acme Corp GmbH",
+    provider_name="my-provider",
     risk_level="limited",  # Article 50 transparency obligations
     intended_purpose="Answer customer questions about products and policies",
     audit_backend="sqlite",  # Use SQLite for queryable audit logs

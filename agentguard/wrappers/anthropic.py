@@ -9,7 +9,7 @@ Usage:
     from agentguard.wrappers.anthropic import wrap_anthropic
     from anthropic import Anthropic
 
-    guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+    guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
     client = wrap_anthropic(Anthropic(), guard)
 
     # Every call is now automatically compliant

@@ -9,7 +9,7 @@ Usage:
     from agentguard.wrappers.langchain import AgentGuardCallback
     from langchain_openai import ChatOpenAI
 
-    guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+    guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
     callback = AgentGuardCallback(guard)
     llm = ChatOpenAI(callbacks=[callback])
 

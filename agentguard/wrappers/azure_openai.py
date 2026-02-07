@@ -13,7 +13,7 @@ Usage:
     from agentguard.wrappers.azure_openai import wrap_azure_openai
     from openai import AzureOpenAI
 
-    guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+    guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
     client = wrap_azure_openai(
         AzureOpenAI(
             azure_endpoint="https://my-resource.openai.azure.com",
