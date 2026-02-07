@@ -195,6 +195,8 @@ class AgentGuardCallback(_Base):  # type: ignore[misc]
             "escalation_reason": result["escalation_reason"],
             "content_label": result["content_label"],
             "latency_ms": result["latency_ms"],
+            "input_policy": result.get("input_policy"),
+            "output_policy": result.get("output_policy"),
         }
 
         self.results[run_key] = compliance

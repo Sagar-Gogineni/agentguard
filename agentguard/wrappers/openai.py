@@ -28,6 +28,36 @@ from typing import Any, Iterator
 from ..core import AgentGuard
 
 
+class _SyntheticMessage:
+    """Minimal stand-in for an OpenAI ChatCompletionMessage when the
+    request was blocked by input policy (LLM never called)."""
+
+    def __init__(self, content: str):
+        self.content = content
+        self.role = "assistant"
+        self.function_call = None
+        self.tool_calls = None
+
+
+class _SyntheticChoice:
+    def __init__(self, content: str):
+        self.index = 0
+        self.message = _SyntheticMessage(content)
+        self.finish_reason = "stop"
+
+
+class _SyntheticResponse:
+    """Lightweight response returned when input policy blocks the call."""
+
+    def __init__(self, content: str, model: str | None = None):
+        self.id = "agentguard-blocked"
+        self.object = "chat.completion"
+        self.model = model or "agentguard-blocked"
+        self.choices = [_SyntheticChoice(content)]
+        self.usage = None
+        self._agentguard: dict[str, Any] = {}
+
+
 def _extract_input(messages: list[dict[str, Any]]) -> str:
     """Extract user input text from the messages list.
 
@@ -108,6 +138,8 @@ class ComplianceStream:
                 "escalation_reason": result["escalation_reason"],
                 "content_label": result["content_label"],
                 "latency_ms": result["latency_ms"],
+                "input_policy": result.get("input_policy"),
+                "output_policy": result.get("output_policy"),
             }
 
 
@@ -141,6 +173,30 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
         input_text = _extract_input(list(messages))
 
         if stream:
+            # Pre-check input policy before starting the stream
+            if guard._input_policy:
+                ip_result = guard._input_policy.check(input_text)
+                if ip_result.blocked:
+                    result = guard.invoke(
+                        func=lambda _: "",
+                        input_text=input_text,
+                        model=model,
+                        user_id=user_id,
+                        metadata=ag_metadata,
+                    )
+                    resp = _SyntheticResponse(content=result["response"], model=model)
+                    resp._agentguard = {
+                        "interaction_id": result["interaction_id"],
+                        "disclosure": result["disclosure"],
+                        "escalated": result["escalated"],
+                        "escalation_reason": result["escalation_reason"],
+                        "content_label": result["content_label"],
+                        "latency_ms": result["latency_ms"],
+                        "input_policy": result.get("input_policy"),
+                        "output_policy": result.get("output_policy"),
+                    }
+                    return resp
+
             raw_stream = original_create(*args, **kwargs)
             return ComplianceStream(
                 stream=raw_stream,
@@ -168,7 +224,14 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
             metadata=ag_metadata,
         )
 
-        # Attach compliance metadata to the original response object
+        # If input policy blocked the request, func was never called
+        if captured_response is None:
+            captured_response = _SyntheticResponse(
+                content=result["response"],
+                model=model,
+            )
+
+        # Attach compliance metadata to the response object
         captured_response._agentguard = {
             "interaction_id": result["interaction_id"],
             "disclosure": result["disclosure"],
@@ -176,6 +239,8 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
             "escalation_reason": result["escalation_reason"],
             "content_label": result["content_label"],
             "latency_ms": result["latency_ms"],
+            "input_policy": result.get("input_policy"),
+            "output_policy": result.get("output_policy"),
         }
         return captured_response
 
