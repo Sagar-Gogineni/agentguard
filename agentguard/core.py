@@ -8,7 +8,7 @@ Usage:
 
     guard = AgentGuard(
         system_name="my-chatbot",
-        provider_name="Acme Corp",
+        provider_name="my-provider",
     )
 
     # Wrap any function
@@ -71,7 +71,7 @@ class AgentGuard:
     Example:
         guard = AgentGuard(
             system_name="customer-bot",
-            provider_name="Acme Corp",
+            provider_name="my-provider",
             risk_level="limited",
         )
 

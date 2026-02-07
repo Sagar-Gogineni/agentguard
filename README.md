@@ -2,6 +2,7 @@
 
 **EU AI Act compliance middleware for AI agents. Make any LLM-powered agent legally deployable in Europe with 3 lines of code.**
 
+[![PyPI version](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -35,7 +36,7 @@ from agentguard import AgentGuard
 # 1. Initialize with your system details
 guard = AgentGuard(
     system_name="customer-support-bot",
-    provider_name="Acme Corp GmbH",
+    provider_name="my-provider",
     risk_level="limited",
 )
 
@@ -102,7 +103,7 @@ AgentGuard automatically detects when interactions should be reviewed by a human
 ```python
 guard = AgentGuard(
     system_name="my-bot",
-    provider_name="Acme Corp",
+    provider_name="my-provider",
     human_escalation="low_confidence",
     confidence_threshold=0.7,
     sensitive_keywords=["legal", "medical", "financial advice"],
@@ -146,7 +147,7 @@ pip install "agentguard[openai]"
 from agentguard import AgentGuard, wrap_openai
 from openai import OpenAI
 
-guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
 client = wrap_openai(OpenAI(), guard)
 
 # Every call is now compliant — logged, disclosed, escalation-checked
@@ -182,7 +183,7 @@ pip install "agentguard[openai]"
 from agentguard import AgentGuard, wrap_azure_openai
 from openai import AzureOpenAI
 
-guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
 client = wrap_azure_openai(
     AzureOpenAI(
         azure_endpoint="https://my-resource.openai.azure.com",
@@ -208,7 +209,7 @@ pip install "agentguard[anthropic]"
 from agentguard import AgentGuard, wrap_anthropic
 from anthropic import Anthropic
 
-guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
 client = wrap_anthropic(Anthropic(), guard)
 
 message = client.messages.create(
@@ -230,7 +231,7 @@ pip install "agentguard[langchain]"
 from agentguard import AgentGuard, AgentGuardCallback
 from langchain_openai import ChatOpenAI  # or AzureChatOpenAI, ChatAnthropic, etc.
 
-guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
 callback = AgentGuardCallback(guard, user_id="user-123")
 llm = ChatOpenAI(model="gpt-4", callbacks=[callback])
 
@@ -241,6 +242,93 @@ print(callback.results)      # all runs keyed by run_id
 ```
 
 Works with any LangChain LLM — ChatOpenAI, AzureChatOpenAI, ChatAnthropic, and more. Streaming is also supported automatically via the callback hooks.
+
+## Audit Backends (Article 12)
+
+AgentGuard supports multiple audit backends for logging all AI interactions:
+
+### File Backend (default)
+
+Writes one JSONL file per day to the audit directory. Simple, portable, and easy to ship to external systems:
+
+```python
+guard = AgentGuard(
+    system_name="my-bot",
+    provider_name="my-provider",
+    audit_backend="file",
+    audit_path="./agentguard_audit",
+)
+# Logs go to ./agentguard_audit/audit_2026-02-07.jsonl
+```
+
+### SQLite Backend
+
+Local SQLite database with built-in querying and statistics. Required for the dashboard and compliance report statistics:
+
+```python
+guard = AgentGuard(
+    system_name="my-bot",
+    provider_name="my-provider",
+    audit_backend="sqlite",
+    audit_path="./agentguard_audit",
+)
+
+# Query audit logs programmatically
+entries = guard.audit.query(
+    start_date="2026-01-01",
+    end_date="2026-02-07",
+    user_id="customer-42",
+    escalated_only=True,
+    limit=100,
+)
+
+# Get aggregate statistics
+stats = guard.audit.get_stats()
+print(stats)
+# {
+#     "total_interactions": 1234,
+#     "total_escalations": 56,
+#     "total_errors": 3,
+#     "disclosures_shown": 1231,
+#     "unique_users": 89,
+#     "avg_latency_ms": 245.3,
+# }
+```
+
+### Custom Backend
+
+Provide your own callback for integration with external logging systems (e.g., S3, BigQuery, Datadog):
+
+```python
+def my_log_handler(entry):
+    # Send to your logging infrastructure
+    requests.post("https://my-logging-api/ingest", json=entry.model_dump())
+
+guard = AgentGuard(
+    system_name="my-bot",
+    provider_name="my-provider",
+    audit_backend="custom",
+)
+# Pass custom_callback when constructing the AuditLogger directly
+```
+
+## Human Review Dashboard
+
+A Streamlit-based dashboard for Article 14 human oversight.
+
+```bash
+pip install "agentguard[dashboard]"
+agentguard-dashboard --audit-path ./agentguard_audit
+```
+
+Features:
+- Compliance statistics (total interactions, escalation rate, avg confidence, avg latency)
+- Pending escalation review queue with Approve/Reject buttons
+- Full audit log browser with filters (date range, user ID, escalated only)
+- CSV export of audit data
+- Live compliance report viewer
+
+Requires the `sqlite` audit backend (`audit_backend="sqlite"`) to be enabled in your AgentGuard configuration. The dashboard connects directly to the SQLite audit database.
 
 ## FastAPI Integration
 
@@ -304,7 +392,6 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Priority areas:
 - Cloud audit backends (S3, BigQuery)
-- Dashboard UI for human review queue
 - C2PA standard implementation
 - Async support (ainvoke, async wrappers)
 - Webhook notifications for escalations
@@ -315,6 +402,6 @@ Apache 2.0 — use it freely in commercial projects.
 
 ---
 
-**Built by [Sagar](https://github.com/sagar)** — AI Engineer based in Berlin, specializing in enterprise AI systems and compliance.
+**Built by [Sagar](https://github.com/Sagar-Gogineni)** — AI Engineer based in Berlin, specializing in enterprise AI systems and compliance.
 
 *AgentGuard: Because shipping AI agents without compliance is like shipping code without tests. You can do it, but you probably shouldn't.*

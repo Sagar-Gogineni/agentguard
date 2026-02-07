@@ -9,7 +9,7 @@ Usage:
     from agentguard.wrappers.openai import wrap_openai
     from openai import OpenAI
 
-    guard = AgentGuard(system_name="my-bot", provider_name="Acme Corp")
+    guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
     client = wrap_openai(OpenAI(), guard)
 
     # Every call is now automatically compliant
