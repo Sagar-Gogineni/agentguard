@@ -32,7 +32,7 @@ from .wrappers.azure_openai import wrap_azure_openai
 from .wrappers.langchain import AgentGuardCallback
 from .wrappers.openai import wrap_openai
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AgentGuard",
