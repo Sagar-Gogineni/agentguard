@@ -12,7 +12,7 @@
 
 Starting **August 2, 2026**, every company deploying AI systems in the EU must comply with the [EU AI Act](https://artificialintelligenceact.eu/) — or face fines up to **€35M or 7% of global turnover**.
 
-There are hundreds of AI agent frameworks on GitHub. Almost none of them can be legally deployed in Europe.
+There are hundreds of AI agent frameworks on GitHub. Almost none of them ship with the transparency, audit logging, or human oversight tooling required by the EU AI Act — leaving that burden entirely on you.
 
 AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or LLM call with the compliance layer required by the EU AI Act:
 
