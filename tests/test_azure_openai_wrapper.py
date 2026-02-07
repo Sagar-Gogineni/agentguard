@@ -77,9 +77,7 @@ class MockCompletions:
     def create(self, **kwargs):
         if kwargs.get("stream"):
             return MockStream(self._stream_chunks)
-        return MockChatCompletion(
-            self._response_text, model=kwargs.get("model", "gpt-4")
-        )
+        return MockChatCompletion(self._response_text, model=kwargs.get("model", "gpt-4"))
 
 
 class MockChat:

@@ -34,6 +34,7 @@ guard = AgentGuard(
     block_on_escalation=False,  # Set True to block responses that need human review
 )
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -52,6 +53,7 @@ app = FastAPI(
 # Your LLM function (replace with real implementation)
 # ------------------------------------------------------------------ #
 
+
 def call_llm(query: str) -> str:
     """Replace this with your actual LLM call."""
     return f"Here's information about: {query}"
@@ -60,6 +62,7 @@ def call_llm(query: str) -> str:
 # ------------------------------------------------------------------ #
 # API Models
 # ------------------------------------------------------------------ #
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -78,6 +81,7 @@ class ChatResponse(BaseModel):
 # ------------------------------------------------------------------ #
 # Endpoints
 # ------------------------------------------------------------------ #
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -148,5 +152,3 @@ async def reject_review(interaction_id: str, reason: str = ""):
     if guard.oversight.reject(interaction_id, reason):
         return {"status": "rejected", "reason": reason}
     raise HTTPException(404, "Interaction not found in review queue")
-
-

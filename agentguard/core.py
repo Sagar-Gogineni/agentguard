@@ -51,10 +51,7 @@ class EscalationTriggered(Exception):
     def __init__(self, reason: str, interaction_id: str):
         self.reason = reason
         self.interaction_id = interaction_id
-        super().__init__(
-            f"Human escalation triggered: {reason} "
-            f"(interaction: {interaction_id})"
-        )
+        super().__init__(f"Human escalation triggered: {reason} (interaction: {interaction_id})")
 
 
 class AgentGuard:
@@ -120,7 +117,8 @@ class AgentGuard:
             risk_level=risk_level,
             intended_purpose=intended_purpose,
             disclosure_method=disclosure_method,
-            disclosure_text=disclosure_text or AgentGuardConfig.model_fields["disclosure_text"].default,
+            disclosure_text=disclosure_text
+            or AgentGuardConfig.model_fields["disclosure_text"].default,
             label_content=label_content,
             audit_backend=audit_backend,
             audit_path=audit_path,
@@ -128,7 +126,8 @@ class AgentGuard:
             log_outputs=log_outputs,
             human_escalation=human_escalation,
             confidence_threshold=confidence_threshold,
-            sensitive_keywords=sensitive_keywords or AgentGuardConfig.model_fields["sensitive_keywords"].default_factory(),
+            sensitive_keywords=sensitive_keywords
+            or AgentGuardConfig.model_fields["sensitive_keywords"].default_factory(),
             escalation_callback=escalation_callback,
         )
 
@@ -204,9 +203,7 @@ class AgentGuard:
         )
 
         # --- Step 1: Check for human escalation BEFORE calling LLM ---
-        pre_check = self._oversight.check(
-            input_text=input_text, confidence=confidence
-        )
+        pre_check = self._oversight.check(input_text=input_text, confidence=confidence)
         if pre_check.should_escalate:
             entry.human_escalated = True
             entry.escalation_reason = pre_check.reason
@@ -218,9 +215,7 @@ class AgentGuard:
             if self._block_on_escalation:
                 entry.latency_ms = (time.time() - start_time) * 1000
                 self._logger.log(entry)
-                raise EscalationTriggered(
-                    pre_check.reason, entry.interaction_id
-                )
+                raise EscalationTriggered(pre_check.reason, entry.interaction_id)
 
         # --- Step 2: Call the actual AI function ---
         error = None

@@ -29,6 +29,7 @@ guard = AgentGuard(
 # Your existing AI function (unchanged)
 # ------------------------------------------------------------------ #
 
+
 def my_llm_call(query: str) -> str:
     """Simulate an LLM call. Replace with your actual LLM client."""
     # In real usage, this would be:
@@ -95,7 +96,7 @@ print("=" * 60)
 with guard.interaction(user_id="customer-77") as ctx:
     # Make your LLM call however you want
     response = my_llm_call("I need legal advice about a defective product")
-    
+
     # Record it for compliance
     info = ctx.record(
         input_text="I need legal advice about a defective product",

@@ -68,9 +68,7 @@ class ComplianceReporter:
                 "article_14_compliance": {
                     "escalation_mode": self.config.human_escalation.value,
                     "confidence_threshold": self.config.confidence_threshold,
-                    "sensitive_keywords_count": len(
-                        self.config.sensitive_keywords
-                    ),
+                    "sensitive_keywords_count": len(self.config.sensitive_keywords),
                 },
             },
             "record_keeping": {
@@ -86,12 +84,9 @@ class ComplianceReporter:
 
         if self.config.risk_level == RiskLevel.HIGH:
             report["high_risk_documentation"] = {
-                "article_9_risk_management": self.config.risk_management_ref
-                or "NOT PROVIDED",
-                "article_10_data_governance": self.config.data_governance_ref
-                or "NOT PROVIDED",
-                "article_11_technical_doc": self.config.technical_doc_ref
-                or "NOT PROVIDED",
+                "article_9_risk_management": self.config.risk_management_ref or "NOT PROVIDED",
+                "article_10_data_governance": self.config.data_governance_ref or "NOT PROVIDED",
+                "article_11_technical_doc": self.config.technical_doc_ref or "NOT PROVIDED",
             }
 
         return report
@@ -99,9 +94,7 @@ class ComplianceReporter:
     def save_report(self, path: str | Path | None = None) -> Path:
         """Generate and save compliance report as JSON."""
         report = self.generate_summary()
-        output_path = Path(
-            path or self.config.audit_path / "compliance_report.json"
-        )
+        output_path = Path(path or self.config.audit_path / "compliance_report.json")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, "w") as f:

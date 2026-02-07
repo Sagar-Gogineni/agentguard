@@ -52,18 +52,14 @@ def _get_db(audit_path: str) -> sqlite3.Connection:
 
 def _get_stats(db: sqlite3.Connection) -> dict:
     stats = {}
-    stats["total_interactions"] = db.execute(
-        "SELECT COUNT(*) FROM audit_log"
-    ).fetchone()[0]
+    stats["total_interactions"] = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
     stats["total_escalations"] = db.execute(
         "SELECT COUNT(*) FROM audit_log WHERE human_escalated = 1"
     ).fetchone()[0]
     stats["avg_confidence"] = db.execute(
         "SELECT AVG(confidence_score) FROM audit_log WHERE confidence_score IS NOT NULL"
     ).fetchone()[0]
-    stats["avg_latency_ms"] = db.execute(
-        "SELECT AVG(latency_ms) FROM audit_log"
-    ).fetchone()[0]
+    stats["avg_latency_ms"] = db.execute("SELECT AVG(latency_ms) FROM audit_log").fetchone()[0]
     return stats
 
 
@@ -330,18 +326,22 @@ def _run_app() -> None:
             # Build display table
             display = []
             for r in rows:
-                display.append({
-                    "Timestamp": r["timestamp"][:19],
-                    "User": r["user_id"] or "—",
-                    "Model": r["model_used"] or "—",
-                    "Input": _truncate(r["input_text"], 80),
-                    "Output": _truncate(r["output_text"], 80),
-                    "Escalated": "Yes" if r["human_escalated"] else "No",
-                    "Reason": r["escalation_reason"] or "—",
-                    "Confidence": f"{r['confidence_score']:.2f}" if r["confidence_score"] else "—",
-                    "Latency (ms)": f"{r['latency_ms']:.0f}" if r["latency_ms"] else "—",
-                    "Error": r["error"] or "",
-                })
+                display.append(
+                    {
+                        "Timestamp": r["timestamp"][:19],
+                        "User": r["user_id"] or "—",
+                        "Model": r["model_used"] or "—",
+                        "Input": _truncate(r["input_text"], 80),
+                        "Output": _truncate(r["output_text"], 80),
+                        "Escalated": "Yes" if r["human_escalated"] else "No",
+                        "Reason": r["escalation_reason"] or "—",
+                        "Confidence": f"{r['confidence_score']:.2f}"
+                        if r["confidence_score"]
+                        else "—",
+                        "Latency (ms)": f"{r['latency_ms']:.0f}" if r["latency_ms"] else "—",
+                        "Error": r["error"] or "",
+                    }
+                )
             st.dataframe(display, width="stretch")
 
             csv_data = _rows_to_csv(rows)

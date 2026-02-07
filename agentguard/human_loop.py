@@ -46,8 +46,15 @@ class HumanOversight:
         self.mode = mode
         self.confidence_threshold = confidence_threshold
         self.sensitive_keywords = sensitive_keywords or [
-            "legal", "medical", "financial advice", "diagnosis",
-            "terminate", "fire", "lawsuit", "suicide", "emergency",
+            "legal",
+            "medical",
+            "financial advice",
+            "diagnosis",
+            "terminate",
+            "fire",
+            "lawsuit",
+            "suicide",
+            "emergency",
         ]
         self._escalation_callback = escalation_callback
         self._review_queue: list[dict[str, Any]] = []
@@ -100,9 +107,7 @@ class HumanOversight:
             HumanEscalation.LOW_CONFIDENCE,
         ):
             # Check both input and output for sensitive keywords
-            text_to_check = " ".join(
-                filter(None, [input_text, output_text])
-            )
+            text_to_check = " ".join(filter(None, [input_text, output_text]))
             matched = self._find_sensitive_keywords(text_to_check)
             if matched:
                 return EscalationResult(

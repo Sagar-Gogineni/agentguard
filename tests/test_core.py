@@ -1,12 +1,11 @@
 """Tests for AgentGuard core functionality."""
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from agentguard import AgentGuard, EscalationTriggered, RiskLevel
+from agentguard import AgentGuard, EscalationTriggered
 
 
 @pytest.fixture
@@ -51,9 +50,7 @@ class TestBasicInvoke:
         assert headers["X-AI-Act-Compliant"] == "true"
 
     def test_invoke_includes_content_label(self, guard):
-        result = guard.invoke(
-            func=dummy_llm, input_text="Hello", model="gpt-4"
-        )
+        result = guard.invoke(func=dummy_llm, input_text="Hello", model="gpt-4")
         label = result["content_label"]
         assert label["ai_generated"] is True
         assert label["generator"] == "test-bot"
