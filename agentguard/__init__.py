@@ -27,6 +27,8 @@ from .config import (
     RiskLevel,
 )
 from .core import AgentGuard, EscalationTriggered
+from .policy import CustomRule, InputPolicy, OutputPolicy, PolicyAction, PolicyResult
+from .taxonomy import CategoryDefinition, DEFAULT_CATEGORIES, DEFAULT_DISCLAIMERS
 from .wrappers.anthropic import wrap_anthropic
 from .wrappers.azure_openai import wrap_azure_openai
 from .wrappers.langchain import AgentGuardCallback
@@ -39,10 +41,18 @@ __all__ = [
     "AgentGuardCallback",
     "AgentGuardConfig",
     "AuditBackend",
+    "CategoryDefinition",
     "ContentLabel",
+    "CustomRule",
+    "DEFAULT_CATEGORIES",
+    "DEFAULT_DISCLAIMERS",
     "DisclosureMethod",
     "EscalationTriggered",
     "HumanEscalation",
+    "InputPolicy",
+    "OutputPolicy",
+    "PolicyAction",
+    "PolicyResult",
     "RiskLevel",
     "wrap_anthropic",
     "wrap_azure_openai",

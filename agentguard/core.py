@@ -42,6 +42,7 @@ from .config import (
 )
 from .disclosure import DisclosureManager
 from .human_loop import HumanOversight
+from .policy import InputPolicy, OutputPolicy
 from .report import ComplianceReporter
 
 
@@ -100,6 +101,9 @@ class AgentGuard:
         escalation_callback: Callable | None = None,
         # Behavior
         block_on_escalation: bool = False,
+        # Content policies
+        input_policy: InputPolicy | None = None,
+        output_policy: OutputPolicy | None = None,
     ):
         # Coerce string enums
         if isinstance(risk_level, str):
@@ -149,6 +153,8 @@ class AgentGuard:
         )
         self._reporter = ComplianceReporter(self._config, self._logger)
         self._block_on_escalation = block_on_escalation
+        self._input_policy = input_policy
+        self._output_policy = output_policy
 
     # ------------------------------------------------------------------ #
     #  Primary API: invoke()
@@ -202,7 +208,51 @@ class AgentGuard:
             else None,
         )
 
-        # --- Step 1: Check for human escalation BEFORE calling LLM ---
+        # --- Step 1: Input policy check (BEFORE LLM call) ---
+        input_policy_result = None
+        if self._input_policy:
+            input_policy_result = self._input_policy.check(input_text)
+            entry.input_policy_blocked = input_policy_result.blocked
+            entry.input_policy_flagged_categories = input_policy_result.matched_categories
+
+            if input_policy_result.blocked:
+                entry.latency_ms = (time.time() - start_time) * 1000
+                entry.output_text = input_policy_result.safe_response
+                self._logger.log(entry)
+                return {
+                    "response": input_policy_result.safe_response,
+                    "raw_response": input_policy_result.safe_response,
+                    "interaction_id": entry.interaction_id,
+                    "disclosure": self._disclosure.get_http_headers(entry.interaction_id),
+                    "escalated": False,
+                    "escalation_reason": None,
+                    "content_label": None,
+                    "latency_ms": entry.latency_ms,
+                    "input_policy": {
+                        "blocked": True,
+                        "reason": input_policy_result.block_reason,
+                        "flagged_categories": [],
+                        "categories": input_policy_result.matched_categories,
+                    },
+                    "output_policy": None,
+                }
+
+            if input_policy_result.escalate:
+                entry.human_escalated = True
+                entry.escalation_reason = input_policy_result.escalation_reason
+                self._oversight.escalate(
+                    interaction_id=entry.interaction_id,
+                    input_text=input_text,
+                    reason=input_policy_result.escalation_reason,
+                )
+                if self._block_on_escalation:
+                    entry.latency_ms = (time.time() - start_time) * 1000
+                    self._logger.log(entry)
+                    raise EscalationTriggered(
+                        input_policy_result.escalation_reason, entry.interaction_id
+                    )
+
+        # --- Step 2: Check for human escalation BEFORE calling LLM ---
         pre_check = self._oversight.check(input_text=input_text, confidence=confidence)
         if pre_check.should_escalate:
             entry.human_escalated = True
@@ -217,21 +267,34 @@ class AgentGuard:
                 self._logger.log(entry)
                 raise EscalationTriggered(pre_check.reason, entry.interaction_id)
 
-        # --- Step 2: Call the actual AI function ---
-        error = None
+        # --- Step 3: Call the actual AI function ---
         raw_response = ""
         try:
             raw_response = func(input_text, *args, **kwargs)
             if not isinstance(raw_response, str):
                 raw_response = str(raw_response)
         except Exception as e:
-            error = str(e)
-            entry.error = error
+            entry.error = str(e)
             entry.latency_ms = (time.time() - start_time) * 1000
             self._logger.log(entry)
             raise
 
-        # --- Step 3: Check output for escalation ---
+        # --- Step 4: Output policy check (AFTER LLM call) ---
+        output_policy_result = None
+        if self._output_policy:
+            output_policy_result = self._output_policy.check(raw_response)
+            entry.output_policy_blocked = output_policy_result.blocked
+            entry.output_policy_flagged_categories = output_policy_result.matched_categories
+
+            if output_policy_result.blocked:
+                raw_response = output_policy_result.safe_response
+            elif output_policy_result.flagged_categories:
+                raw_response = self._output_policy.apply_disclaimers(
+                    raw_response, output_policy_result.flagged_categories
+                )
+                entry.output_disclaimer_added = True
+
+        # --- Step 5: Check output for escalation ---
         post_check = self._oversight.check(
             input_text=input_text,
             output_text=raw_response,
@@ -247,13 +310,13 @@ class AgentGuard:
                 reason=post_check.reason,
             )
 
-        # --- Step 4: Apply disclosure ---
+        # --- Step 6: Apply disclosure ---
         disclosed_response = self._disclosure.apply_disclosure(
             raw_response, interaction_id=entry.interaction_id
         )
         entry.disclosure_shown = True
 
-        # --- Step 5: Create content label ---
+        # --- Step 7: Create content label ---
         content_label = None
         if self._config.label_content:
             content_label = self._disclosure.create_content_label(
@@ -261,7 +324,7 @@ class AgentGuard:
             )
             entry.content_labeled = True
 
-        # --- Step 6: Finalize audit entry ---
+        # --- Step 8: Finalize audit entry ---
         entry.output_text = raw_response if self._config.log_outputs else None
         entry.confidence_score = confidence
         entry.latency_ms = (time.time() - start_time) * 1000
@@ -269,7 +332,7 @@ class AgentGuard:
 
         self._logger.log(entry)
 
-        return {
+        result = {
             "response": disclosed_response,
             "raw_response": raw_response,
             "interaction_id": entry.interaction_id,
@@ -279,6 +342,22 @@ class AgentGuard:
             "content_label": content_label.model_dump() if content_label else None,
             "latency_ms": entry.latency_ms,
         }
+
+        if self._input_policy and input_policy_result:
+            result["input_policy"] = {
+                "blocked": input_policy_result.blocked,
+                "flagged_categories": input_policy_result.flagged_categories,
+                "categories": input_policy_result.matched_categories,
+            }
+        if self._output_policy and output_policy_result:
+            result["output_policy"] = {
+                "blocked": output_policy_result.blocked,
+                "flagged_categories": output_policy_result.flagged_categories,
+                "categories": output_policy_result.matched_categories,
+                "disclaimer_added": entry.output_disclaimer_added,
+            }
+
+        return result
 
     # ------------------------------------------------------------------ #
     #  Decorator API: @guard.compliant
@@ -432,6 +511,16 @@ class InteractionContext:
         self._entry.model_used = model
         self._entry.confidence_score = confidence
         self._entry.metadata = metadata or {}
+
+        # Policy checks (informational — can't block retroactively in context manager)
+        if self._guard._input_policy:
+            ip_result = self._guard._input_policy.check(input_text)
+            self._entry.input_policy_blocked = ip_result.blocked
+            self._entry.input_policy_flagged_categories = ip_result.matched_categories
+        if self._guard._output_policy:
+            op_result = self._guard._output_policy.check(output_text)
+            self._entry.output_policy_blocked = op_result.blocked
+            self._entry.output_policy_flagged_categories = op_result.matched_categories
 
         # Check escalation
         check = self._guard._oversight.check(

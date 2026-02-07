@@ -43,6 +43,13 @@ class AuditEntry(BaseModel):
     escalation_reason: str | None = None
     confidence_score: float | None = None
 
+    # Policy enforcement
+    input_policy_blocked: bool = False
+    input_policy_flagged_categories: list[str] = Field(default_factory=list)
+    output_policy_blocked: bool = False
+    output_policy_flagged_categories: list[str] = Field(default_factory=list)
+    output_disclaimer_added: bool = False
+
     # Performance & safety
     latency_ms: float | None = None
     token_count_input: int | None = None
@@ -104,7 +111,12 @@ class AuditLogger:
                 token_count_input INTEGER,
                 token_count_output INTEGER,
                 error TEXT,
-                metadata TEXT
+                metadata TEXT,
+                input_policy_blocked INTEGER DEFAULT 0,
+                input_policy_flagged TEXT,
+                output_policy_blocked INTEGER DEFAULT 0,
+                output_policy_flagged TEXT,
+                output_disclaimer_added INTEGER DEFAULT 0
             )
         """)
         self._db.execute("""
@@ -113,6 +125,18 @@ class AuditLogger:
         self._db.execute("""
             CREATE INDEX IF NOT EXISTS idx_user ON audit_log(user_id)
         """)
+        # Migrate existing databases that lack policy columns
+        for col, col_type in [
+            ("input_policy_blocked", "INTEGER DEFAULT 0"),
+            ("input_policy_flagged", "TEXT"),
+            ("output_policy_blocked", "INTEGER DEFAULT 0"),
+            ("output_policy_flagged", "TEXT"),
+            ("output_disclaimer_added", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                self._db.execute(f"ALTER TABLE audit_log ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         self._db.commit()
 
     def log(self, entry: AuditEntry) -> str:
@@ -140,6 +164,11 @@ class AuditLogger:
         data["disclosure_shown"] = int(data["disclosure_shown"])
         data["content_labeled"] = int(data["content_labeled"])
         data["human_escalated"] = int(data["human_escalated"])
+        data["input_policy_blocked"] = int(data["input_policy_blocked"])
+        data["input_policy_flagged"] = json.dumps(data.pop("input_policy_flagged_categories"))
+        data["output_policy_blocked"] = int(data["output_policy_blocked"])
+        data["output_policy_flagged"] = json.dumps(data.pop("output_policy_flagged_categories"))
+        data["output_disclaimer_added"] = int(data["output_disclaimer_added"])
 
         columns = ", ".join(data.keys())
         placeholders = ", ".join(["?"] * len(data))
@@ -191,6 +220,19 @@ class AuditLogger:
             data["content_labeled"] = bool(data["content_labeled"])
             data["human_escalated"] = bool(data["human_escalated"])
             data["metadata"] = json.loads(data["metadata"]) if data["metadata"] else {}
+            data["input_policy_blocked"] = bool(data.get("input_policy_blocked", 0))
+            data["input_policy_flagged_categories"] = (
+                json.loads(data.pop("input_policy_flagged"))
+                if data.get("input_policy_flagged")
+                else []
+            )
+            data["output_policy_blocked"] = bool(data.get("output_policy_blocked", 0))
+            data["output_policy_flagged_categories"] = (
+                json.loads(data.pop("output_policy_flagged"))
+                if data.get("output_policy_flagged")
+                else []
+            )
+            data["output_disclaimer_added"] = bool(data.get("output_disclaimer_added", 0))
             entries.append(AuditEntry(**data))
 
         return entries
@@ -220,6 +262,12 @@ class AuditLogger:
             "SELECT COUNT(DISTINCT user_id) FROM audit_log WHERE user_id IS NOT NULL"
         )
         stats["unique_users"] = cursor.fetchone()[0]
+
+        cursor = self._db.execute("SELECT COUNT(*) FROM audit_log WHERE input_policy_blocked = 1")
+        stats["inputs_blocked"] = cursor.fetchone()[0]
+
+        cursor = self._db.execute("SELECT COUNT(*) FROM audit_log WHERE output_policy_blocked = 1")
+        stats["outputs_blocked"] = cursor.fetchone()[0]
 
         return stats
 

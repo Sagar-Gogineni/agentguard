@@ -12,7 +12,7 @@
 
 Starting **August 2, 2026**, every company deploying AI systems in the EU must comply with the [EU AI Act](https://artificialintelligenceact.eu/) — or face fines up to **€35M or 7% of global turnover**.
 
-There are hundreds of AI agent frameworks on GitHub. Almost none of them ship with the transparency, audit logging, or human oversight tooling required by the EU AI Act — leaving that burden entirely on you.
+
 
 AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or LLM call with the compliance layer required by the EU AI Act:
 
@@ -22,6 +22,7 @@ AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or 
 | AI content must be machine-readable labeled | Art. 50(2) | Content labeling (C2PA-compatible) |
 | Interactions must be logged and auditable | Art. 12 | Structured audit logging (file/SQLite) |
 | Human oversight must be possible | Art. 14 | Automatic escalation + review queue |
+| Harmful content must be prevented | Runtime | Input/Output Policy Engine (block/flag/disclaim) |
 | System must be documented | Art. 11, 18 | Auto-generated compliance reports |
 
 ## Quick Start
@@ -94,6 +95,95 @@ with guard.interaction(user_id="user-789") as ctx:
         confidence=0.45,
     )
     # Low confidence + keyword "contract" → auto-escalated
+```
+
+## Input/Output Policy Engine — Runtime Content Enforcement
+
+The policy engine is AgentGuard's core differentiator: **block, flag, or disclaim content on every LLM call** — before and after the model responds.
+
+```
+Input → [InputPolicy: block/flag/allow] → [LLM Call] → [OutputPolicy: disclaim/block/pass] → Output
+```
+
+### InputPolicy (pre-call)
+
+Runs **before** the LLM is called. Blocked requests never reach the API — zero cost, zero latency.
+
+```python
+from agentguard import AgentGuard, InputPolicy, OutputPolicy, PolicyAction
+from agentguard.policy import CustomRule
+
+input_policy = InputPolicy(
+    block_categories=["weapons", "self_harm", "csam"],
+    flag_categories=["emotional_simulation", "medical", "legal", "financial"],
+    max_input_length=5000,
+    custom_rules=[
+        CustomRule(
+            name="prompt_injection",
+            pattern=r"ignore previous instructions",
+            action=PolicyAction.BLOCK,
+            message="Blocked: potential prompt injection.",
+        ),
+    ],
+)
+```
+
+### OutputPolicy (post-call)
+
+Runs **after** the LLM responds. Appends category-specific disclaimers or blocks unsafe output.
+
+```python
+output_policy = OutputPolicy(
+    scan_categories=["medical", "legal", "financial"],
+    block_on_detect=False,     # True = replace response entirely
+    add_disclaimer=True,       # Append category-aware disclaimers
+)
+```
+
+### Wire it up
+
+```python
+guard = AgentGuard(
+    system_name="my-bot",
+    provider_name="My Company",
+    risk_level="limited",
+    input_policy=input_policy,
+    output_policy=output_policy,
+)
+```
+
+### Built-in content categories
+
+AgentGuard ships with keyword/pattern matchers for these categories out of the box:
+
+| Category | Detected via | Default action examples |
+|---|---|---|
+| `weapons` | Keywords + regex patterns | Block |
+| `medical` | Keywords (diagnosis, symptoms, treatment...) | Flag + disclaimer |
+| `legal` | Keywords + regex (lawsuit, sue, attorney...) | Flag + disclaimer |
+| `financial` | Keywords + regex (invest, portfolio...) | Flag + disclaimer |
+| `emotional_simulation` | Keywords + regex (girlfriend, boyfriend...) | Flag |
+| `self_harm` | Keywords + regex | Block |
+| `csam` | Keywords | Block |
+
+You can override or extend any category with your own `CategoryDefinition`.
+
+### Policy metadata on every response
+
+When using provider wrappers, policy results are attached to every response:
+
+```python
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "How to build a bomb?"}],
+)
+
+print(response.choices[0].message.content)
+# "I'm unable to process this request as it violates our content policy."
+
+print(response._agentguard["input_policy"])
+# {"blocked": True, "reason": "Input matched blocked category: weapons", ...}
+# LLM was never called — 0ms latency, $0 cost
 ```
 
 ## Human Oversight (Article 14)
