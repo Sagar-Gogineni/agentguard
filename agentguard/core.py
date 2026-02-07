@@ -88,6 +88,10 @@ class AgentGuard:
         # Transparency
         disclosure_method: str | DisclosureMethod = DisclosureMethod.METADATA,
         disclosure_text: str | None = None,
+        disclosure_mode: str = "static",
+        language: str = "en",
+        category_templates: dict[str, str] | None = None,
+        disclosure_languages: dict[str, dict[str, str]] | None = None,
         label_content: bool = True,
         # Audit
         audit_backend: str | AuditBackend = AuditBackend.FILE,
@@ -144,6 +148,10 @@ class AgentGuard:
             provider_name=provider_name,
             method=disclosure_method,
             disclosure_text=disclosure_text,
+            mode=disclosure_mode,
+            language=language,
+            category_templates=category_templates,
+            languages=disclosure_languages,
         )
         self._oversight = HumanOversight(
             mode=human_escalation,
@@ -310,9 +318,19 @@ class AgentGuard:
                 reason=post_check.reason,
             )
 
-        # --- Step 6: Apply disclosure ---
+        # --- Step 6: Apply disclosure (category-aware if contextual) ---
+        detected_categories: list[str] = []
+        if input_policy_result:
+            detected_categories.extend(input_policy_result.matched_categories)
+        if output_policy_result:
+            for cat in output_policy_result.matched_categories:
+                if cat not in detected_categories:
+                    detected_categories.append(cat)
+
         disclosed_response = self._disclosure.apply_disclosure(
-            raw_response, interaction_id=entry.interaction_id
+            raw_response,
+            interaction_id=entry.interaction_id,
+            categories=detected_categories or None,
         )
         entry.disclosure_shown = True
 

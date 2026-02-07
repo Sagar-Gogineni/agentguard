@@ -27,6 +27,7 @@ from .config import (
     RiskLevel,
 )
 from .core import AgentGuard, EscalationTriggered
+from .disclosure import DISCLOSURE_TEMPLATES, DisclosureManager
 from .policy import CustomRule, InputPolicy, OutputPolicy, PolicyAction, PolicyResult
 from .taxonomy import CategoryDefinition, DEFAULT_CATEGORIES, DEFAULT_DISCLAIMERS
 from .wrappers.anthropic import wrap_anthropic
@@ -46,6 +47,8 @@ __all__ = [
     "CustomRule",
     "DEFAULT_CATEGORIES",
     "DEFAULT_DISCLAIMERS",
+    "DISCLOSURE_TEMPLATES",
+    "DisclosureManager",
     "DisclosureMethod",
     "EscalationTriggered",
     "HumanEscalation",
