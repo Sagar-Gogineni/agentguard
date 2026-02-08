@@ -60,7 +60,67 @@ def _get_stats(db: sqlite3.Connection) -> dict:
         "SELECT AVG(confidence_score) FROM audit_log WHERE confidence_score IS NOT NULL"
     ).fetchone()[0]
     stats["avg_latency_ms"] = db.execute("SELECT AVG(latency_ms) FROM audit_log").fetchone()[0]
+    stats["inputs_blocked"] = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE input_policy_blocked = 1"
+    ).fetchone()[0]
+    stats["outputs_blocked"] = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE output_policy_blocked = 1"
+    ).fetchone()[0]
+    stats["disclaimers_added"] = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE output_disclaimer_added = 1"
+    ).fetchone()[0]
     return stats
+
+
+def _get_category_breakdown(db: sqlite3.Connection) -> dict[str, int]:
+    """Count how often each flagged category appears across all interactions."""
+    rows = db.execute(
+        "SELECT input_policy_flagged FROM audit_log "
+        "WHERE input_policy_flagged IS NOT NULL AND input_policy_flagged != '[]'"
+    ).fetchall()
+    counts: dict[str, int] = {}
+    for r in rows:
+        try:
+            import json as _json
+
+            cats = _json.loads(r[0])
+            for cat in cats:
+                counts[cat] = counts.get(cat, 0) + 1
+        except (ValueError, TypeError):
+            pass
+    # Also count output-flagged categories
+    rows = db.execute(
+        "SELECT output_policy_flagged FROM audit_log "
+        "WHERE output_policy_flagged IS NOT NULL AND output_policy_flagged != '[]'"
+    ).fetchall()
+    for r in rows:
+        try:
+            import json as _json
+
+            cats = _json.loads(r[0])
+            for cat in cats:
+                counts[cat] = counts.get(cat, 0) + 1
+        except (ValueError, TypeError):
+            pass
+    return dict(sorted(counts.items(), key=lambda x: x[1], reverse=True))
+
+
+def _get_distinct_categories(db: sqlite3.Connection) -> list[str]:
+    """Get all distinct content categories that have been flagged."""
+    rows = db.execute(
+        "SELECT input_policy_flagged FROM audit_log "
+        "WHERE input_policy_flagged IS NOT NULL AND input_policy_flagged != '[]'"
+    ).fetchall()
+    cats: set[str] = set()
+    for r in rows:
+        try:
+            import json as _json
+
+            for cat in _json.loads(r[0]):
+                cats.add(cat)
+        except (ValueError, TypeError):
+            pass
+    return sorted(cats)
 
 
 def _query_escalated(
@@ -69,6 +129,7 @@ def _query_escalated(
     end_date: str | None = None,
     user_id: str | None = None,
     reason_filter: str | None = None,
+    category_filter: str | None = None,
 ) -> list[dict]:
     conditions = ["a.human_escalated = 1"]
     params: list = []
@@ -85,6 +146,9 @@ def _query_escalated(
     if reason_filter and reason_filter != "All":
         conditions.append("a.escalation_reason = ?")
         params.append(reason_filter)
+    if category_filter and category_filter != "All":
+        conditions.append("a.input_policy_flagged LIKE ?")
+        params.append(f'%"{category_filter}"%')
 
     where = "WHERE " + " AND ".join(conditions)
     query = f"""
@@ -105,6 +169,7 @@ def _query_audit_log(
     end_date: str | None = None,
     user_id: str | None = None,
     escalated_only: bool = False,
+    category_filter: str | None = None,
 ) -> list[dict]:
     conditions: list[str] = []
     params: list = []
@@ -120,6 +185,10 @@ def _query_audit_log(
         params.append(user_id)
     if escalated_only:
         conditions.append("human_escalated = 1")
+    if category_filter and category_filter != "All":
+        conditions.append("(input_policy_flagged LIKE ? OR output_policy_flagged LIKE ?)")
+        params.append(f'%"{category_filter}"%')
+        params.append(f'%"{category_filter}"%')
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     query = f"SELECT * FROM audit_log {where} ORDER BY timestamp DESC LIMIT 1000"
@@ -144,6 +213,18 @@ def _record_decision(
         (interaction_id, decision, reason, datetime.now(timezone.utc).isoformat()),
     )
     db.commit()
+
+
+def _parse_categories(raw: str | None) -> list[str]:
+    """Parse a JSON-encoded category list from the DB into a Python list."""
+    if not raw or raw == "[]":
+        return []
+    try:
+        import json as _json
+
+        return _json.loads(raw)
+    except (ValueError, TypeError):
+        return []
 
 
 def _truncate(text: str | None, length: int = 100) -> str:
@@ -220,8 +301,16 @@ def _run_app() -> None:
             index=0,
         )
 
-    # --- Connect to DB ---
+    # --- Connect to DB (early, so sidebar can query categories) ---
     db = _get_db(audit_path)
+
+    with st.sidebar:
+        all_categories = _get_distinct_categories(db)
+        category_filter = st.selectbox(
+            "Content Category",
+            ["All"] + all_categories,
+            index=0,
+        ) if all_categories else "All"
 
     start_str = start_date.isoformat() if isinstance(start_date, date) else None
     end_str = end_date.isoformat() if isinstance(end_date, date) else None
@@ -243,6 +332,19 @@ def _run_app() -> None:
         c3.metric("Avg Confidence", f"{avg_conf:.2f}" if avg_conf else "N/A")
         c4.metric("Avg Latency", f"{avg_lat:.0f} ms" if avg_lat else "N/A")
 
+        # Policy enforcement stats
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Inputs Blocked", f"{stats.get('inputs_blocked', 0):,}")
+        p2.metric("Outputs Blocked", f"{stats.get('outputs_blocked', 0):,}")
+        p3.metric("Disclaimers Added", f"{stats.get('disclaimers_added', 0):,}")
+
+        # Category breakdown
+        cat_counts = _get_category_breakdown(db)
+        if cat_counts:
+            with st.expander("Category Breakdown"):
+                for cat, count in cat_counts.items():
+                    st.write(f"**{cat}**: {count}")
+
         st.divider()
 
         # Reason filter (specific to review queue)
@@ -260,6 +362,7 @@ def _run_app() -> None:
             end_date=end_str,
             user_id=user_filter,
             reason_filter=reason_filter,
+            category_filter=category_filter,
         )
 
         pending = [r for r in rows if r.get("decision") is None]
@@ -272,28 +375,31 @@ def _run_app() -> None:
         else:
             for row in pending:
                 with st.container(border=True):
-                    cols = st.columns([2, 1, 3, 3, 2, 1, 2])
+                    cols = st.columns([2, 1, 2, 2, 2, 1, 1, 2])
                     cols[0].caption("Timestamp")
                     cols[0].write(row["timestamp"][:19])
                     cols[1].caption("User")
                     cols[1].write(row["user_id"] or "—")
                     cols[2].caption("Input")
-                    cols[2].write(_truncate(row["input_text"]))
+                    cols[2].write(_truncate(row["input_text"], 80))
                     cols[3].caption("Output")
-                    cols[3].write(_truncate(row["output_text"]))
+                    cols[3].write(_truncate(row["output_text"], 80))
                     cols[4].caption("Reason")
                     cols[4].write(row["escalation_reason"] or "—")
                     cols[5].caption("Conf.")
                     conf = row["confidence_score"]
                     cols[5].write(f"{conf:.2f}" if conf is not None else "—")
+                    cols[6].caption("Category")
+                    cats = _parse_categories(row.get("input_policy_flagged"))
+                    cols[6].write(", ".join(cats) if cats else "—")
 
-                    btn_cols = cols[6]
+                    btn_cols = cols[7]
                     btn_cols.caption("Action")
                     iid = row["interaction_id"]
-                    if btn_cols.button("✅ Approve", key=f"approve_{iid}"):
+                    if btn_cols.button("Approve", key=f"approve_{iid}"):
                         _record_decision(db, iid, "approved")
                         st.rerun()
-                    if btn_cols.button("❌ Reject", key=f"reject_{iid}"):
+                    if btn_cols.button("Reject", key=f"reject_{iid}"):
                         _record_decision(db, iid, "rejected")
                         st.rerun()
 
@@ -310,7 +416,8 @@ def _run_app() -> None:
     # --- Page: Audit Log ---
     elif page == "Audit Log":
         st.subheader("Audit Log")
-        escalated_only = st.checkbox("Escalated only")
+        col_a, col_b = st.columns(2)
+        escalated_only = col_a.checkbox("Escalated only")
 
         rows = _query_audit_log(
             db,
@@ -318,6 +425,7 @@ def _run_app() -> None:
             end_date=end_str,
             user_id=user_filter,
             escalated_only=escalated_only,
+            category_filter=category_filter,
         )
 
         if not rows:
@@ -326,6 +434,8 @@ def _run_app() -> None:
             # Build display table
             display = []
             for r in rows:
+                in_cats = _parse_categories(r.get("input_policy_flagged"))
+                out_cats = _parse_categories(r.get("output_policy_flagged"))
                 display.append(
                     {
                         "Timestamp": r["timestamp"][:19],
@@ -333,16 +443,18 @@ def _run_app() -> None:
                         "Model": r["model_used"] or "—",
                         "Input": _truncate(r["input_text"], 80),
                         "Output": _truncate(r["output_text"], 80),
-                        "Escalated": "Yes" if r["human_escalated"] else "No",
-                        "Reason": r["escalation_reason"] or "—",
-                        "Confidence": f"{r['confidence_score']:.2f}"
+                        "Blocked": "Yes" if r.get("input_policy_blocked") else "",
+                        "Categories": ", ".join(in_cats) if in_cats else "",
+                        "Disclaimer": "Yes" if r.get("output_disclaimer_added") else "",
+                        "Escalated": "Yes" if r["human_escalated"] else "",
+                        "Reason": r["escalation_reason"] or "",
+                        "Conf.": f"{r['confidence_score']:.2f}"
                         if r["confidence_score"]
-                        else "—",
-                        "Latency (ms)": f"{r['latency_ms']:.0f}" if r["latency_ms"] else "—",
-                        "Error": r["error"] or "",
+                        else "",
+                        "Latency": f"{r['latency_ms']:.0f}" if r["latency_ms"] else "",
                     }
                 )
-            st.dataframe(display, width="stretch")
+            st.dataframe(display, use_container_width=True)
 
             csv_data = _rows_to_csv(rows)
             st.download_button(
