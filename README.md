@@ -153,19 +153,102 @@ guard = AgentGuard(
 )
 ```
 
-### Built-in content categories
+### Content Detection
 
-AgentGuard ships with keyword/pattern matchers for these categories out of the box:
+AgentGuard ships with built-in keyword/pattern matchers for common categories:
 
-| Category | Detected via | Default action examples |
+| Category | Default Action | Detected via |
 |---|---|---|
-| `weapons` | Keywords + regex patterns | Block |
-| `medical` | Keywords (diagnosis, symptoms, treatment...) | Flag + disclaimer |
-| `legal` | Keywords + regex (lawsuit, sue, attorney...) | Flag + disclaimer |
-| `financial` | Keywords + regex (invest, portfolio...) | Flag + disclaimer |
-| `emotional_simulation` | Keywords + regex (girlfriend, boyfriend...) | Flag |
-| `self_harm` | Keywords + regex | Block |
-| `csam` | Keywords | Block |
+| `weapons` | Block | Keywords + regex patterns |
+| `self_harm` | Block | Keywords + regex |
+| `csam` | Block | Keywords |
+| `medical` | Flag + disclaimer | Keywords (diagnosis, symptoms, dosage...) |
+| `legal` | Flag + disclaimer | Keywords (lawsuit, attorney, liability...) |
+| `financial` | Flag + disclaimer | Keywords (invest, portfolio, trading...) |
+| `emotional_simulation` | Flag | Keywords (girlfriend, boyfriend...) |
+
+> Built-in detection uses keyword and regex patterns. This is fast (<1ms)
+> and catches obvious cases, but will miss paraphrased or subtle inputs.
+> For production accuracy, plug in a dedicated classifier:
+
+#### Custom Classifier Hook
+
+Plug in **any** external classifier — Azure Content Safety, OpenAI Moderation, Llama Guard, or your own rules. AgentGuard merges the results with its built-in keyword detection:
+
+```python
+from agentguard import AgentGuard, InputPolicy, OutputPolicy
+```
+
+**Azure AI Content Safety:**
+
+```python
+from azure.ai.contentsafety import ContentSafetyClient
+
+safety_client = ContentSafetyClient(endpoint="...", credential="...")
+
+def azure_classifier(text: str) -> list[str]:
+    result = safety_client.analyze_text({"text": text})
+    categories = []
+    if result.violence_result.severity >= 2:
+        categories.append("weapons")
+    if result.self_harm_result.severity >= 2:
+        categories.append("self_harm")
+    return categories
+
+guard = AgentGuard(
+    ...,
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm"],
+        custom_classifier=azure_classifier,
+    ),
+)
+```
+
+**OpenAI Moderation (free):**
+
+```python
+from openai import OpenAI
+oai = OpenAI()
+
+def openai_classifier(text: str) -> list[str]:
+    result = oai.moderations.create(input=text)
+    scores = result.results[0].categories
+    categories = []
+    if scores.violence: categories.append("weapons")
+    if scores.self_harm: categories.append("self_harm")
+    if scores.sexual_minors: categories.append("csam")
+    return categories
+
+guard = AgentGuard(
+    ...,
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm", "csam"],
+        custom_classifier=openai_classifier,
+    ),
+)
+```
+
+**Simple domain rules:**
+
+```python
+def healthcare_rules(text: str) -> list[str]:
+    categories = []
+    controlled = ["oxycodone", "fentanyl", "morphine"]
+    if any(drug in text.lower() for drug in controlled):
+        categories.append("controlled_substance")
+    return categories
+```
+
+The custom classifier is any `Callable[[str], list[str]]`. If it crashes, AgentGuard catches the error and continues with keyword results only. If it's too slow, it's skipped after `classifier_timeout` seconds (default: 5.0).
+
+#### Detection Quality Roadmap
+
+| Version | Method | Accuracy | Latency | Cost |
+|---|---|---|---|---|
+| v0.1 (now) | Keywords + regex | ~70% | <1ms | Free |
+| v0.1+ (now) | + Custom classifier hook | User-defined | User-defined | User-defined |
+| v0.3 | + LLM-as-judge option | ~95% | +200ms | ~$0.00001/call |
+| v1.0 | + Fine-tuned small model | ~93% | +20ms | Free (local) |
 
 You can override or extend any category with your own `CategoryDefinition`.
 
