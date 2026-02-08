@@ -311,10 +311,29 @@ class TestInputPolicyIntegration:
 
 
 class TestOutputPolicyIntegration:
-    def test_medical_disclaimer_injected(self, tmp_path):
+    def test_medical_disclaimer_in_metadata(self, tmp_path):
+        """In default METADATA mode, disclaimer goes into compliance dict, not response text."""
         guard = AgentGuard(
             system_name="test-bot",
             provider_name="Test Corp",
+            audit_backend="sqlite",
+            audit_path=str(tmp_path / "audit"),
+            output_policy=OutputPolicy(scan_categories=["medical"], add_disclaimer=True),
+        )
+        result = guard.invoke(func=medical_llm, input_text="What's wrong with me?")
+        # Response text is NOT modified in metadata mode
+        assert result["response"] == result["raw_response"]
+        # Disclaimer is in compliance metadata
+        assert result["compliance"]["policy"]["disclaimer"] is not None
+        assert "healthcare professional" in result["compliance"]["policy"]["disclaimer"].lower()
+        assert result["output_policy"]["disclaimer_added"] is True
+
+    def test_medical_disclaimer_appended_in_prepend_mode(self, tmp_path):
+        """In PREPEND mode, disclaimer is appended to response text (backward compat)."""
+        guard = AgentGuard(
+            system_name="test-bot",
+            provider_name="Test Corp",
+            disclosure_method="prepend",
             audit_backend="sqlite",
             audit_path=str(tmp_path / "audit"),
             output_policy=OutputPolicy(scan_categories=["medical"], add_disclaimer=True),
@@ -381,7 +400,10 @@ class TestCombinedPolicies:
         )
         result = guard.invoke(func=medical_llm, input_text="What are my symptoms?")
         assert "medical" in result["input_policy"]["flagged_categories"]
-        assert "healthcare professional" in result["raw_response"].lower()
+        # In default METADATA mode, disclaimer is in metadata, not in response text
+        assert result["response"] == result["raw_response"]
+        assert result["compliance"]["policy"]["disclaimer"] is not None
+        assert "healthcare professional" in result["compliance"]["policy"]["disclaimer"].lower()
 
 
 # ------------------------------------------------------------------ #

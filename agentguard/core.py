@@ -227,11 +227,43 @@ class AgentGuard:
                 entry.latency_ms = (time.time() - start_time) * 1000
                 entry.output_text = input_policy_result.safe_response
                 self._logger.log(entry)
+
+                http_headers = self._disclosure.get_http_headers(
+                    entry.interaction_id,
+                    categories=input_policy_result.matched_categories,
+                )
+                compliance = {
+                    "interaction_id": entry.interaction_id,
+                    "disclosure": {
+                        "text": "",
+                        "delivered": False,
+                        "method": self._disclosure.method.value,
+                        "language": self._disclosure.language,
+                    },
+                    "content_label": None,
+                    "policy": {
+                        "input_categories": input_policy_result.matched_categories,
+                        "input_action": "blocked",
+                        "output_categories": [],
+                        "output_action": "pass",
+                        "disclaimer": None,
+                    },
+                    "escalation": {"escalated": False, "reason": None},
+                    "audit": {
+                        "logged": True,
+                        "backend": self._config.audit_backend.value,
+                        "timestamp": entry.timestamp,
+                        "latency_ms": entry.latency_ms,
+                    },
+                    "http_headers": http_headers,
+                }
                 return {
                     "response": input_policy_result.safe_response,
                     "raw_response": input_policy_result.safe_response,
                     "interaction_id": entry.interaction_id,
-                    "disclosure": self._disclosure.get_http_headers(entry.interaction_id),
+                    "compliance": compliance,
+                    # Backward-compat flat keys
+                    "disclosure": http_headers,
                     "escalated": False,
                     "escalation_reason": None,
                     "content_label": None,
@@ -289,6 +321,7 @@ class AgentGuard:
 
         # --- Step 4: Output policy check (AFTER LLM call) ---
         output_policy_result = None
+        output_disclaimer_text = None
         if self._output_policy:
             output_policy_result = self._output_policy.check(raw_response)
             entry.output_policy_blocked = output_policy_result.blocked
@@ -297,9 +330,19 @@ class AgentGuard:
             if output_policy_result.blocked:
                 raw_response = output_policy_result.safe_response
             elif output_policy_result.flagged_categories:
-                raw_response = self._output_policy.apply_disclaimers(
-                    raw_response, output_policy_result.flagged_categories
-                )
+                if self._config.disclosure_method in (
+                    DisclosureMethod.PREPEND,
+                    DisclosureMethod.FIRST_ONLY,
+                ):
+                    # Text-modifying modes: append disclaimer to response
+                    raw_response = self._output_policy.apply_disclaimers(
+                        raw_response, output_policy_result.flagged_categories
+                    )
+                else:
+                    # METADATA / HEADER / NONE / CALLBACK: metadata only
+                    output_disclaimer_text = self._output_policy.get_disclaimer_text(
+                        output_policy_result.flagged_categories
+                    )
                 entry.output_disclaimer_added = True
 
         # --- Step 5: Check output for escalation ---
@@ -331,13 +374,14 @@ class AgentGuard:
             raw_response,
             interaction_id=entry.interaction_id,
             categories=detected_categories or None,
+            session_id=session_id,
         )
         entry.disclosure_shown = True
 
         # --- Step 7: Create content label ---
-        content_label = None
+        content_label_section = None
         if self._config.label_content:
-            content_label = self._disclosure.create_content_label(
+            content_label_section = self._disclosure.build_content_label_section(
                 model=model, interaction_id=entry.interaction_id
             )
             entry.content_labeled = True
@@ -350,14 +394,67 @@ class AgentGuard:
 
         self._logger.log(entry)
 
+        # --- Step 9: Build compliance metadata ---
+        cats_or_none = detected_categories or None
+        http_headers = self._disclosure.get_http_headers(
+            entry.interaction_id, categories=cats_or_none
+        )
+
+        # Determine output policy disclaimer text
+        disclaimer_text = output_disclaimer_text
+        if disclaimer_text is None and entry.output_disclaimer_added and self._output_policy and output_policy_result:
+            disclaimer_text = self._output_policy.get_disclaimer_text(
+                output_policy_result.flagged_categories
+            )
+
+        compliance = {
+            "interaction_id": entry.interaction_id,
+            "disclosure": self._disclosure.build_disclosure_section(cats_or_none),
+            "content_label": content_label_section,
+            "policy": {
+                "input_categories": (
+                    input_policy_result.matched_categories
+                    if input_policy_result else []
+                ),
+                "input_action": (
+                    "blocked" if (input_policy_result and input_policy_result.blocked)
+                    else "flagged" if (input_policy_result and input_policy_result.flagged_categories)
+                    else "pass"
+                ),
+                "output_categories": (
+                    output_policy_result.matched_categories
+                    if output_policy_result else []
+                ),
+                "output_action": (
+                    "blocked" if (output_policy_result and output_policy_result.blocked)
+                    else "flagged" if (output_policy_result and output_policy_result.flagged_categories)
+                    else "pass"
+                ),
+                "disclaimer": disclaimer_text,
+            },
+            "escalation": {
+                "escalated": entry.human_escalated,
+                "reason": entry.escalation_reason,
+            },
+            "audit": {
+                "logged": True,
+                "backend": self._config.audit_backend.value,
+                "timestamp": entry.timestamp,
+                "latency_ms": entry.latency_ms,
+            },
+            "http_headers": http_headers,
+        }
+
         result = {
             "response": disclosed_response,
             "raw_response": raw_response,
             "interaction_id": entry.interaction_id,
-            "disclosure": self._disclosure.get_http_headers(entry.interaction_id),
+            "compliance": compliance,
+            # Backward-compat flat keys
+            "disclosure": http_headers,
             "escalated": entry.human_escalated,
             "escalation_reason": entry.escalation_reason,
-            "content_label": content_label.model_dump() if content_label else None,
+            "content_label": content_label_section,
             "latency_ms": entry.latency_ms,
         }
 

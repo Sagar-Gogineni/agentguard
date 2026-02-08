@@ -12,13 +12,12 @@ Usage:
     guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
     client = wrap_openai(OpenAI(), guard)
 
-    # Every call is now automatically compliant
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": "Hello!"}],
     )
-    print(response.choices[0].message.content)  # unchanged
-    print(response._agentguard)  # compliance metadata
+    print(response.choices[0].message.content)  # untouched LLM output
+    print(response.compliance)                  # structured compliance metadata
 """
 
 from __future__ import annotations
@@ -55,6 +54,7 @@ class _SyntheticResponse:
         self.model = model or "agentguard-blocked"
         self.choices = [_SyntheticChoice(content)]
         self.usage = None
+        self.compliance: dict[str, Any] = {}
         self._agentguard: dict[str, Any] = {}
 
 
@@ -90,8 +90,8 @@ class ComplianceStream:
     """Wrapper around an OpenAI Stream that yields chunks unchanged
     while accumulating the full response for compliance logging.
 
-    After iteration completes, ``_agentguard`` contains the compliance
-    metadata from ``guard.invoke()``.
+    After iteration completes, ``compliance`` contains the structured
+    compliance metadata from ``guard.invoke()``.
     """
 
     def __init__(
@@ -109,7 +109,9 @@ class ComplianceStream:
         self._model = model
         self._user_id = user_id
         self._metadata = metadata
+        self.compliance: dict[str, Any] | None = None
         self._agentguard: dict[str, Any] | None = None
+        self.compliance_headers: dict[str, str] | None = None
 
     def __iter__(self) -> Iterator[Any]:
         accumulated: list[str] = []
@@ -131,16 +133,9 @@ class ComplianceStream:
                 user_id=self._user_id,
                 metadata=self._metadata,
             )
-            self._agentguard = {
-                "interaction_id": result["interaction_id"],
-                "disclosure": result["disclosure"],
-                "escalated": result["escalated"],
-                "escalation_reason": result["escalation_reason"],
-                "content_label": result["content_label"],
-                "latency_ms": result["latency_ms"],
-                "input_policy": result.get("input_policy"),
-                "output_policy": result.get("output_policy"),
-            }
+            self.compliance = result.get("compliance", {})
+            self._agentguard = self.compliance
+            self.compliance_headers = self.compliance.get("http_headers", {})
 
 
 def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
@@ -156,7 +151,7 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
     Returns:
         The same client instance, with ``chat.completions.create``
         monkey-patched. The original response object is preserved;
-        compliance metadata is attached as ``response._agentguard``.
+        compliance metadata is attached as ``response.compliance``.
     """
     original_create = client.chat.completions.create
     default_user_id = defaults.get("user_id")
@@ -185,16 +180,8 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
                         metadata=ag_metadata,
                     )
                     resp = _SyntheticResponse(content=result["response"], model=model)
-                    resp._agentguard = {
-                        "interaction_id": result["interaction_id"],
-                        "disclosure": result["disclosure"],
-                        "escalated": result["escalated"],
-                        "escalation_reason": result["escalation_reason"],
-                        "content_label": result["content_label"],
-                        "latency_ms": result["latency_ms"],
-                        "input_policy": result.get("input_policy"),
-                        "output_policy": result.get("output_policy"),
-                    }
+                    resp.compliance = result.get("compliance", {})
+                    resp._agentguard = resp.compliance
                     return resp
 
             raw_stream = original_create(*args, **kwargs)
@@ -230,18 +217,17 @@ def wrap_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
                 content=result["response"],
                 model=model,
             )
+        elif result["response"] != result["raw_response"]:
+            # Only modify content when disclosure was actually prepended
+            # (PREPEND/FIRST_ONLY modes). In METADATA/HEADER/NONE modes
+            # response == raw_response so content stays untouched.
+            captured_response.choices[0].message.content = result["response"]
 
-        # Attach compliance metadata to the response object
-        captured_response._agentguard = {
-            "interaction_id": result["interaction_id"],
-            "disclosure": result["disclosure"],
-            "escalated": result["escalated"],
-            "escalation_reason": result["escalation_reason"],
-            "content_label": result["content_label"],
-            "latency_ms": result["latency_ms"],
-            "input_policy": result.get("input_policy"),
-            "output_policy": result.get("output_policy"),
-        }
+        # Attach structured compliance metadata
+        captured_response.compliance = result.get("compliance", {})
+        captured_response._agentguard = captured_response.compliance
+        captured_response.compliance_headers = captured_response.compliance.get("http_headers", {})
+
         return captured_response
 
     client.chat.completions.create = patched_create

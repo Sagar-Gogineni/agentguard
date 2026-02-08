@@ -28,8 +28,8 @@ Usage:
         model="gpt-4",  # Azure deployment name
         messages=[{"role": "user", "content": "Hello!"}],
     )
-    print(response.choices[0].message.content)  # unchanged
-    print(response._agentguard)                 # compliance metadata
+    print(response.choices[0].message.content)  # untouched LLM output
+    print(response.compliance)                  # structured compliance metadata
 """
 
 from __future__ import annotations
@@ -57,6 +57,6 @@ def wrap_azure_openai(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
     Returns:
         The same client instance, with ``chat.completions.create``
         monkey-patched.  Compliance metadata is attached as
-        ``response._agentguard``.
+        ``response.compliance``.
     """
     return wrap_openai(client, guard, **defaults)

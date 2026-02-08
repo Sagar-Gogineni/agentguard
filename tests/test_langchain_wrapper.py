@@ -164,6 +164,23 @@ class TestTextLLM:
         assert headers["X-AI-System"] == "test-bot"
         assert headers["X-AI-Provider"] == "Test Corp"
 
+    def test_compliance_headers_in_result(self, callback):
+        run_id = make_run_id()
+
+        callback.on_llm_start(
+            serialized=SERIALIZED_LLM,
+            prompts=["Hello"],
+            run_id=run_id,
+        )
+        callback.on_llm_end(
+            response=MockLLMResult("Hi!"),
+            run_id=run_id,
+        )
+
+        assert "compliance_headers" in callback.last_result
+        assert isinstance(callback.last_result["compliance_headers"], dict)
+        assert callback.last_result["compliance_headers"]["X-AI-Generated"] == "true"
+
     def test_content_label_includes_model(self, callback):
         run_id = make_run_id()
 

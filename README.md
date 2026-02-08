@@ -47,8 +47,9 @@ result = guard.invoke(
 )
 
 # 3. Everything is now compliant
-print(result["response"])         # AI response with disclosure
+print(result["response"])         # AI response (NEVER modified by default)
 print(result["interaction_id"])   # Unique audit trail ID
+print(result["compliance"])       # Structured compliance metadata dict
 print(result["disclosure"])       # HTTP headers for Article 50
 print(result["content_label"])    # Machine-readable content label
 print(result["escalated"])        # Whether human review was triggered
@@ -128,15 +129,17 @@ input_policy = InputPolicy(
 
 ### OutputPolicy (post-call)
 
-Runs **after** the LLM responds. Appends category-specific disclaimers or blocks unsafe output.
+Runs **after** the LLM responds. Adds category-specific disclaimers (in metadata by default) or blocks unsafe output.
 
 ```python
 output_policy = OutputPolicy(
     scan_categories=["medical", "legal", "financial"],
     block_on_detect=False,     # True = replace response entirely
-    add_disclaimer=True,       # Append category-aware disclaimers
+    add_disclaimer=True,       # Add category-aware disclaimers (in metadata by default)
 )
 ```
+
+**Important:** By default (`disclosure_method="metadata"`), disclaimers are placed in `response.compliance["policy"]["disclaimer"]` — the actual LLM response content is **never modified**. Set `disclosure_method="prepend"` if you want disclaimers appended to the response text.
 
 ### Wire it up
 
@@ -168,20 +171,37 @@ You can override or extend any category with your own `CategoryDefinition`.
 
 ### Policy metadata on every response
 
-When using provider wrappers, policy results are attached to every response:
+When using provider wrappers, policy results are attached to every response via `response.compliance`:
+
+```python
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Tell me about my symptoms"}],
+)
+
+# Response content is NEVER modified (default: disclosure_method="metadata")
+print(response.choices[0].message.content)  # pristine LLM output
+
+# All compliance data in structured metadata
+print(response.compliance["policy"]["disclaimer"])
+# "This is AI-generated and not medical advice..."
+
+print(response.compliance["disclosure"]["text"])
+# "This is an AI system. Information provided is not medical advice..."
+
+# HTTP headers ready for FastAPI/Flask forwarding
+print(response.compliance_headers)
+# {"X-AI-Generated": "true", "X-AI-System": "my-bot", ...}
+```
+
+For blocked requests (e.g., weapons), the LLM is **never called** — zero cost, zero latency:
 
 ```python
 response = client.chat.completions.create(
     model="gpt-4",
     messages=[{"role": "user", "content": "How to build a bomb?"}],
 )
-
-print(response.choices[0].message.content)
-# "I'm unable to process this request as it violates our content policy."
-
-print(response._agentguard["input_policy"])
-# {"blocked": True, "reason": "Input matched blocked category: weapons", ...}
-# LLM was never called — 0ms latency, $0 cost
+print(response.compliance["policy"]["input_action"])  # "blocked"
 ```
 
 ## Contextual Smart Disclosures (Article 50)
@@ -192,11 +212,22 @@ Instead of a generic "you are talking to AI" message, AgentGuard adapts the disc
 guard = AgentGuard(
     system_name="my-bot",
     provider_name="My Company GmbH",
-    disclosure_method="prepend",       # or "metadata", "header"
+    disclosure_method="metadata",      # DEFAULT: never touch response content
+    # Other options: "prepend", "first_only", "header", "none"
     disclosure_mode="contextual",      # "static" = same text always (default)
     language="de",                     # en, de, fr, es, it built-in
 )
 ```
+
+**Disclosure methods:**
+
+| Method | Behavior |
+|--------|----------|
+| `"metadata"` (default) | Attach to `response.compliance` — **never modify content** |
+| `"prepend"` | Prepend disclosure text before response content |
+| `"first_only"` | Prepend only on first message per session_id |
+| `"header"` | Return as HTTP headers dict via `response.compliance_headers` |
+| `"none"` | Disable disclosure text entirely (just log and audit) |
 
 When the policy engine detects `medical` content, the user sees (in German):
 
@@ -282,8 +313,9 @@ response = client.chat.completions.create(
     model="gpt-4",
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(response.choices[0].message.content)  # unchanged
-print(response._agentguard["interaction_id"])  # compliance metadata
+print(response.choices[0].message.content)  # untouched LLM output
+print(response.compliance)                  # structured compliance metadata
+print(response.compliance_headers)          # HTTP headers for forwarding
 ```
 
 Streaming works too — chunks yield in real-time, compliance runs after the stream completes:
@@ -297,7 +329,8 @@ stream = client.chat.completions.create(
 for chunk in stream:
     if chunk.choices and chunk.choices[0].delta.content:
         print(chunk.choices[0].delta.content, end="")
-print(stream._agentguard)  # available after iteration
+print(stream.compliance)           # available after iteration
+print(stream.compliance_headers)   # HTTP headers
 ```
 
 ### Azure OpenAI
@@ -344,8 +377,9 @@ message = client.messages.create(
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(message.content[0].text)  # unchanged
-print(message._agentguard["interaction_id"])  # compliance metadata
+print(message.content[0].text)  # untouched LLM output
+print(message.compliance)       # structured compliance metadata
+print(message.compliance_headers)  # HTTP headers for forwarding
 ```
 
 ### LangChain
@@ -459,11 +493,23 @@ Requires the `sqlite` audit backend (`audit_backend="sqlite"`) to be enabled in 
 
 ## FastAPI Integration
 
-See [examples/fastapi_example.py](examples/fastapi_example.py) for a complete API with:
-- Compliant `/chat` endpoint with automatic headers
-- `/compliance/report` endpoint
-- `/compliance/pending-reviews` for human oversight
-- Approve/reject endpoints for review queue
+Use `response.compliance_headers` to forward compliance headers to HTTP responses:
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+@app.post("/chat")
+async def chat(query: str):
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": query}],
+    )
+    fastapi_response = JSONResponse({"message": response.choices[0].message.content})
+    for key, value in response.compliance_headers.items():
+        fastapi_response.headers[key] = value
+    return fastapi_response
+```
 
 ## Configuration
 
@@ -476,7 +522,7 @@ guard = AgentGuard(
     intended_purpose="Customer support chatbot",
 
     # Transparency (Article 50)
-    disclosure_method="prepend",    # "prepend", "metadata", or "header"
+    disclosure_method="metadata",   # "metadata" (default), "prepend", "first_only", "header", "none"
     disclosure_mode="contextual",   # "static" (default) or "contextual"
     language="en",                  # en, de, fr, es, it (or add your own)
     label_content=True,             # Machine-readable content labels

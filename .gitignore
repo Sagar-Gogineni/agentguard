@@ -44,7 +44,7 @@ examples/generate_sample_data.py
 Thumbs.db
 
 # AgentGuard runtime artifacts
-agentguard_audit/
+*_audit/
 *.db
 
 # Claude Code / Playbook
