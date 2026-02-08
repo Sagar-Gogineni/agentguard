@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentguard import AgentGuard, EscalationTriggered
+from agentguard import AgentGuard, EscalationTriggered, OutputPolicy
 
 
 @pytest.fixture
@@ -56,6 +56,40 @@ class TestBasicInvoke:
         assert label["generator"] == "test-bot"
         assert label["provider"] == "Test Corp"
         assert label["model"] == "gpt-4"
+
+    def test_invoke_includes_compliance_dict(self, guard):
+        result = guard.invoke(func=dummy_llm, input_text="Hello", model="gpt-4")
+        c = result["compliance"]
+        assert "interaction_id" in c
+        assert c["disclosure"]["method"] == "metadata"
+        assert c["disclosure"]["delivered"] is True
+        assert c["content_label"]["ai_generated"] is True
+        assert c["policy"]["input_action"] == "pass"
+        assert c["escalation"]["escalated"] is False
+        assert c["audit"]["logged"] is True
+
+    def test_metadata_mode_never_modifies_response(self, guard):
+        result = guard.invoke(func=dummy_llm, input_text="Hello")
+        assert result["response"] == result["raw_response"]
+
+    def test_metadata_mode_with_output_policy_never_modifies_response(self, tmp_audit_dir):
+        guard = AgentGuard(
+            system_name="test-bot",
+            provider_name="Test Corp",
+            audit_backend="sqlite",
+            audit_path=tmp_audit_dir,
+            output_policy=OutputPolicy(scan_categories=["medical"], add_disclaimer=True),
+        )
+        result = guard.invoke(
+            func=lambda q: "Based on your symptoms, the diagnosis is flu",
+            input_text="What's wrong?",
+        )
+        # In METADATA mode, response must equal raw_response (no modification)
+        assert result["response"] == result["raw_response"]
+        assert result["response"] == "Based on your symptoms, the diagnosis is flu"
+        # Disclaimer goes into compliance metadata
+        assert result["compliance"]["policy"]["disclaimer"] is not None
+        assert "healthcare professional" in result["compliance"]["policy"]["disclaimer"].lower()
 
     def test_invoke_measures_latency(self, guard):
         result = guard.invoke(func=dummy_llm, input_text="Hello")

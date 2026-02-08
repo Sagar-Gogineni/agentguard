@@ -188,7 +188,8 @@ class AgentGuardCallback(_Base):  # type: ignore[misc]
             metadata=self.metadata or run_data.get("metadata"),
         )
 
-        compliance = {
+        compliance = result.get("compliance", {})
+        compat = {
             "interaction_id": result["interaction_id"],
             "disclosure": result["disclosure"],
             "escalated": result["escalated"],
@@ -197,10 +198,12 @@ class AgentGuardCallback(_Base):  # type: ignore[misc]
             "latency_ms": result["latency_ms"],
             "input_policy": result.get("input_policy"),
             "output_policy": result.get("output_policy"),
+            "compliance": compliance,
+            "compliance_headers": compliance.get("http_headers", {}),
         }
 
-        self.results[run_key] = compliance
-        self.last_result = compliance
+        self.results[run_key] = compat
+        self.last_result = compat
 
     # ------------------------------------------------------------------ #
     #  on_llm_error — called when the LLM raises an exception

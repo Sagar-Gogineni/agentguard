@@ -18,8 +18,8 @@ Usage:
         max_tokens=1024,
         messages=[{"role": "user", "content": "Hello!"}],
     )
-    print(message.content[0].text)   # unchanged
-    print(message._agentguard)       # compliance metadata
+    print(message.content[0].text)   # untouched LLM output
+    print(message.compliance)        # structured compliance metadata
 """
 
 from __future__ import annotations
@@ -27,6 +27,42 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 from ..core import AgentGuard
+
+
+# ------------------------------------------------------------------ #
+#  Synthetic response objects (used when input policy blocks a call)
+# ------------------------------------------------------------------ #
+
+
+class _SyntheticTextBlock:
+    """Minimal stand-in for an Anthropic TextBlock."""
+
+    def __init__(self, text: str):
+        self.type = "text"
+        self.text = text
+
+
+class _SyntheticUsage:
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+
+class _SyntheticMessage:
+    """Lightweight response returned when input policy blocks the call."""
+
+    def __init__(self, content: str, model: str | None = None):
+        self.id = "agentguard-blocked"
+        self.type = "message"
+        self.role = "assistant"
+        self.content = [_SyntheticTextBlock(content)]
+        self.model = model or "agentguard-blocked"
+        self.stop_reason = "end_turn"
+        self.stop_sequence = None
+        self.usage = _SyntheticUsage()
+        self.compliance: dict[str, Any] = {}
+        self._agentguard: dict[str, Any] = {}
+        self.compliance_headers: dict[str, str] = {}
 
 
 def _extract_input(messages: list[dict[str, Any]], system: str | None = None) -> str:
@@ -98,7 +134,9 @@ class ComplianceStream:
         self._model = model
         self._user_id = user_id
         self._metadata = metadata
+        self.compliance: dict[str, Any] | None = None
         self._agentguard: dict[str, Any] | None = None
+        self.compliance_headers: dict[str, str] | None = None
 
     def __iter__(self) -> Iterator[Any]:
         accumulated: list[str] = []
@@ -119,16 +157,9 @@ class ComplianceStream:
                 user_id=self._user_id,
                 metadata=self._metadata,
             )
-            self._agentguard = {
-                "interaction_id": result["interaction_id"],
-                "disclosure": result["disclosure"],
-                "escalated": result["escalated"],
-                "escalation_reason": result["escalation_reason"],
-                "content_label": result["content_label"],
-                "latency_ms": result["latency_ms"],
-                "input_policy": result.get("input_policy"),
-                "output_policy": result.get("output_policy"),
-            }
+            self.compliance = result.get("compliance", {})
+            self._agentguard = self.compliance
+            self.compliance_headers = self.compliance.get("http_headers", {})
 
 
 def wrap_anthropic(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
@@ -144,7 +175,7 @@ def wrap_anthropic(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
     Returns:
         The same client instance, with ``messages.create``
         monkey-patched. The original response object is preserved;
-        compliance metadata is attached as ``message._agentguard``.
+        compliance metadata is attached as ``message.compliance``.
     """
     original_create = client.messages.create
     default_user_id = defaults.get("user_id")
@@ -160,6 +191,23 @@ def wrap_anthropic(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
         input_text = _extract_input(list(messages), system=system)
 
         if stream:
+            # Pre-check input policy before starting the stream
+            if guard._input_policy:
+                ip_result = guard._input_policy.check(input_text)
+                if ip_result.blocked:
+                    result = guard.invoke(
+                        func=lambda _: "",
+                        input_text=input_text,
+                        model=model,
+                        user_id=user_id,
+                        metadata=ag_metadata,
+                    )
+                    resp = _SyntheticMessage(content=result["response"], model=model)
+                    resp.compliance = result.get("compliance", {})
+                    resp._agentguard = resp.compliance
+                    resp.compliance_headers = resp.compliance.get("http_headers", {})
+                    return resp
+
             raw_stream = original_create(*args, **kwargs)
             return ComplianceStream(
                 stream=raw_stream,
@@ -186,16 +234,18 @@ def wrap_anthropic(client: Any, guard: AgentGuard, **defaults: Any) -> Any:
             metadata=ag_metadata,
         )
 
-        captured_response._agentguard = {
-            "interaction_id": result["interaction_id"],
-            "disclosure": result["disclosure"],
-            "escalated": result["escalated"],
-            "escalation_reason": result["escalation_reason"],
-            "content_label": result["content_label"],
-            "latency_ms": result["latency_ms"],
-            "input_policy": result.get("input_policy"),
-            "output_policy": result.get("output_policy"),
-        }
+        # If input policy blocked the request, func was never called
+        if captured_response is None:
+            captured_response = _SyntheticMessage(
+                content=result["response"],
+                model=model,
+            )
+
+        # Attach structured compliance metadata
+        captured_response.compliance = result.get("compliance", {})
+        captured_response._agentguard = captured_response.compliance
+        captured_response.compliance_headers = captured_response.compliance.get("http_headers", {})
+
         return captured_response
 
     client.messages.create = patched_create

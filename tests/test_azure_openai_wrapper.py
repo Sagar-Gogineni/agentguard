@@ -143,9 +143,9 @@ class TestNonStreaming:
             messages=[{"role": "user", "content": "Hello!"}],
         )
         assert response.choices[0].message.content == "Hello from Azure OpenAI."
-        assert hasattr(response, "_agentguard")
-        assert "interaction_id" in response._agentguard
-        assert len(response._agentguard["interaction_id"]) == 36
+        assert hasattr(response, "compliance")
+        assert "interaction_id" in response.compliance
+        assert len(response.compliance["interaction_id"]) == 36
 
     def test_preserves_azure_response_fields(self, wrapped_client):
         response = wrapped_client.chat.completions.create(
@@ -160,7 +160,7 @@ class TestNonStreaming:
             model="gpt-4",
             messages=[{"role": "user", "content": "Hello!"}],
         )
-        headers = response._agentguard["disclosure"]
+        headers = response.compliance["http_headers"]
         assert headers["X-AI-Generated"] == "true"
         assert headers["X-AI-System"] == "azure-bot"
         assert headers["X-AI-Provider"] == "Test Corp"
@@ -170,9 +170,18 @@ class TestNonStreaming:
             model="my-gpt4-deployment",
             messages=[{"role": "user", "content": "Hello!"}],
         )
-        label = response._agentguard["content_label"]
+        label = response.compliance["content_label"]
         assert label["model"] == "my-gpt4-deployment"
         assert label["ai_generated"] is True
+
+    def test_compliance_headers_always_present(self, wrapped_client):
+        response = wrapped_client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Hello!"}],
+        )
+        assert hasattr(response, "compliance_headers")
+        assert isinstance(response.compliance_headers, dict)
+        assert response.compliance_headers["X-AI-Generated"] == "true"
 
 
 # --------------------------------------------------------------------------- #
@@ -201,7 +210,7 @@ class TestStreaming:
         for _ in stream:
             pass
         assert stream._agentguard is not None
-        assert "interaction_id" in stream._agentguard
+        assert "interaction_id" in stream.compliance
 
 
 # --------------------------------------------------------------------------- #
@@ -219,14 +228,14 @@ class TestEscalation:
             model="gpt-4",
             messages=[{"role": "user", "content": "I need legal help"}],
         )
-        assert response._agentguard["escalated"] is True
+        assert response.compliance["escalation"]["escalated"] is True
 
     def test_no_escalation_for_normal_content(self, wrapped_client):
         response = wrapped_client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": "What is 2+2?"}],
         )
-        assert response._agentguard["escalated"] is False
+        assert response.compliance["escalation"]["escalated"] is False
 
 
 # --------------------------------------------------------------------------- #

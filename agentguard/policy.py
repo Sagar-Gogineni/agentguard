@@ -218,6 +218,24 @@ class OutputPolicy:
         result.flagged_categories = detected
         return result
 
+    def get_disclaimer_text(self, categories: list[str]) -> str | None:
+        """Return combined disclaimer text for the given categories.
+
+        Unlike :meth:`apply_disclaimers`, this does **not** modify any
+        response string — it just returns the raw disclaimer text (or
+        ``None`` when nothing applies).
+        """
+        if not self.add_disclaimer or not categories:
+            return None
+        parts: list[str] = []
+        added: set[str] = set()
+        for cat in categories:
+            disclaimer = self._disclaimers.get(cat)
+            if disclaimer and cat not in added:
+                parts.append(disclaimer)
+                added.add(cat)
+        return "".join(parts) if parts else None
+
     def apply_disclaimers(self, text: str, categories: list[str]) -> str:
         """Append disclaimers for the given categories to the text."""
         if not self.add_disclaimer or not categories:

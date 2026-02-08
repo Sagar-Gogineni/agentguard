@@ -59,7 +59,7 @@ class TestStaticMode:
         assert "\U0001f916" in result
         assert "Hello!" in result
 
-    def test_static_metadata_mode(self):
+    def test_static_metadata_mode_returns_text_unchanged(self):
         dm = DisclosureManager(
             system_name="test-bot",
             provider_name="Test Corp",
@@ -67,9 +67,8 @@ class TestStaticMode:
             mode="static",
         )
         result = dm.apply_disclosure("Hello!", interaction_id="abc-123")
-        assert isinstance(result, dict)
-        assert result["response"] == "Hello!"
-        assert result["ai_disclosure"]["is_ai_generated"] is True
+        assert isinstance(result, str)
+        assert result == "Hello!"
 
     def test_static_header_mode_returns_text_unchanged(self):
         dm = DisclosureManager(
@@ -301,7 +300,7 @@ class TestCustomTemplates:
 
 
 class TestContextualMetadata:
-    def test_metadata_includes_categories_and_language(self):
+    def test_metadata_mode_returns_text_unchanged(self):
         dm = DisclosureManager(
             system_name="bot",
             provider_name="Corp",
@@ -314,20 +313,70 @@ class TestContextualMetadata:
             interaction_id="id-1",
             categories=["medical"],
         )
-        assert isinstance(result, dict)
-        assert result["ai_disclosure"]["language"] == "de"
-        assert result["ai_disclosure"]["categories"] == ["medical"]
-        assert "medizinische Beratung" in result["ai_disclosure"]["disclosure_text"]
+        assert isinstance(result, str)
+        assert result == "Response..."
 
-    def test_metadata_no_categories(self):
+    def test_build_disclosure_section_includes_language_and_text(self):
         dm = DisclosureManager(
             system_name="bot",
             provider_name="Corp",
             method=DisclosureMethod.METADATA,
             mode="contextual",
+            language="de",
         )
-        result = dm.apply_disclosure("Hello!", interaction_id="id-2")
-        assert result["ai_disclosure"]["categories"] == []
+        section = dm.build_disclosure_section(categories=["medical"])
+        assert section["language"] == "de"
+        assert section["method"] == "metadata"
+        assert "medizinische Beratung" in section["text"]
+        assert section["delivered"] is True
+
+    def test_build_content_label_section(self):
+        dm = DisclosureManager(
+            system_name="bot",
+            provider_name="Corp",
+            method=DisclosureMethod.METADATA,
+        )
+        section = dm.build_content_label_section(model="gpt-4", interaction_id="id-1")
+        assert section["ai_generated"] is True
+        assert section["generator"] == "bot"
+        assert section["provider"] == "Corp"
+        assert section["model"] == "gpt-4"
+        assert "c2pa_assertion" in section
+
+    def test_none_mode_returns_text_unchanged(self):
+        dm = DisclosureManager(
+            system_name="bot",
+            provider_name="Corp",
+            method=DisclosureMethod.NONE,
+            mode="contextual",
+        )
+        result = dm.apply_disclosure("Hello!", categories=["medical"])
+        assert result == "Hello!"
+
+    def test_first_only_prepends_once_then_passes(self):
+        dm = DisclosureManager(
+            system_name="bot",
+            provider_name="Corp",
+            method=DisclosureMethod.FIRST_ONLY,
+            mode="contextual",
+        )
+        first = dm.apply_disclosure("Hello!", session_id="s1")
+        assert "bot" in first
+        assert "Hello!" in first
+        second = dm.apply_disclosure("World!", session_id="s1")
+        assert second == "World!"
+
+    def test_first_only_different_sessions_both_get_disclosure(self):
+        dm = DisclosureManager(
+            system_name="bot",
+            provider_name="Corp",
+            method=DisclosureMethod.FIRST_ONLY,
+            mode="contextual",
+        )
+        first = dm.apply_disclosure("Hello!", session_id="s1")
+        assert "bot" in first
+        second = dm.apply_disclosure("World!", session_id="s2")
+        assert "bot" in second
 
 
 # ------------------------------------------------------------------ #
@@ -411,6 +460,29 @@ class TestIntegrationWithGuard:
         )
         # Static mode: should use the generic emoji text, not category-specific
         assert "\U0001f916" in result["response"]
+
+    def test_metadata_mode_with_policy_pristine_response(self, tmp_audit_dir):
+        guard = AgentGuard(
+            system_name="test-bot",
+            provider_name="Test Corp",
+            disclosure_method="metadata",
+            disclosure_mode="contextual",
+            audit_backend="sqlite",
+            audit_path=tmp_audit_dir,
+            input_policy=InputPolicy(flag_categories=["medical"]),
+            output_policy=OutputPolicy(scan_categories=["medical"], add_disclaimer=True),
+        )
+        result = guard.invoke(
+            func=lambda q: "You might have symptoms of diabetes.",
+            input_text="What are symptoms of diabetes?",
+        )
+        # Response text is pristine — never modified
+        assert result["response"] == "You might have symptoms of diabetes."
+        assert result["raw_response"] == "You might have symptoms of diabetes."
+        # Compliance metadata has everything
+        assert result["compliance"]["disclosure"]["text"] is not None
+        assert result["compliance"]["policy"]["disclaimer"] is not None
+        assert "healthcare professional" in result["compliance"]["policy"]["disclaimer"].lower()
 
     def test_no_policy_no_crash(self, tmp_audit_dir):
         guard = AgentGuard(

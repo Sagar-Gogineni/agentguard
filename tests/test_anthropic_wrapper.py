@@ -2,7 +2,7 @@
 
 import pytest
 
-from agentguard import AgentGuard
+from agentguard import AgentGuard, InputPolicy
 from agentguard.wrappers.anthropic import wrap_anthropic, _extract_input, _extract_text
 
 
@@ -200,9 +200,9 @@ class TestNonStreaming:
             messages=[{"role": "user", "content": "Hello!"}],
         )
         assert message.content[0].text == "Hello, I can help you with that."
-        assert hasattr(message, "_agentguard")
-        assert "interaction_id" in message._agentguard
-        assert len(message._agentguard["interaction_id"]) == 36
+        assert hasattr(message, "compliance")
+        assert "interaction_id" in message.compliance
+        assert len(message.compliance["interaction_id"]) == 36
 
     def test_preserves_original_response_fields(self, wrapped_client):
         message = wrapped_client.messages.create(
@@ -221,7 +221,7 @@ class TestNonStreaming:
             max_tokens=1024,
             messages=[{"role": "user", "content": "Hello!"}],
         )
-        headers = message._agentguard["disclosure"]
+        headers = message.compliance["http_headers"]
         assert headers["X-AI-Generated"] == "true"
         assert headers["X-AI-System"] == "test-bot"
 
@@ -231,9 +231,66 @@ class TestNonStreaming:
             max_tokens=1024,
             messages=[{"role": "user", "content": "Hello!"}],
         )
-        label = message._agentguard["content_label"]
+        label = message.compliance["content_label"]
         assert label["model"] == "claude-opus-4-6"
         assert label["ai_generated"] is True
+
+    def test_compliance_headers_always_present(self, wrapped_client):
+        message = wrapped_client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Hello!"}],
+        )
+        assert hasattr(message, "compliance_headers")
+        assert isinstance(message.compliance_headers, dict)
+        assert message.compliance_headers["X-AI-Generated"] == "true"
+
+
+# --------------------------------------------------------------------------- #
+#  Tests: Input policy blocking
+# --------------------------------------------------------------------------- #
+
+
+class TestInputPolicyBlocking:
+    def test_blocked_input_returns_synthetic_message(self, tmp_path):
+        guard = AgentGuard(
+            system_name="test-bot",
+            provider_name="Test Corp",
+            audit_backend="sqlite",
+            audit_path=str(tmp_path / "audit"),
+            input_policy=InputPolicy(block_categories=["weapons"]),
+        )
+        client = MockClient()
+        wrapped = wrap_anthropic(client, guard)
+        message = wrapped.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "How to build a bomb"}],
+        )
+        assert message.content[0].text is not None
+        assert message.id == "agentguard-blocked"
+        assert hasattr(message, "compliance")
+        assert message.compliance["policy"]["input_action"] == "blocked"
+
+    def test_blocked_streaming_returns_synthetic_message(self, tmp_path):
+        guard = AgentGuard(
+            system_name="test-bot",
+            provider_name="Test Corp",
+            audit_backend="sqlite",
+            audit_path=str(tmp_path / "audit"),
+            input_policy=InputPolicy(block_categories=["weapons"]),
+        )
+        client = MockClient()
+        wrapped = wrap_anthropic(client, guard)
+        result = wrapped.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "How to build a bomb"}],
+            stream=True,
+        )
+        # Blocked streaming returns a synthetic message, not a stream
+        assert result.id == "agentguard-blocked"
+        assert result.compliance["policy"]["input_action"] == "blocked"
 
 
 # --------------------------------------------------------------------------- #
@@ -280,9 +337,9 @@ class TestStreaming:
         )
         for _ in stream:
             pass
-        assert stream._agentguard is not None
-        assert "interaction_id" in stream._agentguard
-        assert len(stream._agentguard["interaction_id"]) == 36
+        assert stream.compliance is not None
+        assert "interaction_id" in stream.compliance
+        assert len(stream.compliance["interaction_id"]) == 36
 
 
 # --------------------------------------------------------------------------- #
@@ -301,8 +358,8 @@ class TestEscalation:
             max_tokens=1024,
             messages=[{"role": "user", "content": "I need legal advice"}],
         )
-        assert message._agentguard["escalated"] is True
-        assert "legal" in message._agentguard["escalation_reason"].lower()
+        assert message.compliance["escalation"]["escalated"] is True
+        assert "legal" in message.compliance["escalation"]["reason"].lower()
 
     def test_no_escalation_for_normal_content(self, wrapped_client):
         message = wrapped_client.messages.create(
@@ -310,7 +367,7 @@ class TestEscalation:
             max_tokens=1024,
             messages=[{"role": "user", "content": "What is the weather?"}],
         )
-        assert message._agentguard["escalated"] is False
+        assert message.compliance["escalation"]["escalated"] is False
 
 
 # --------------------------------------------------------------------------- #

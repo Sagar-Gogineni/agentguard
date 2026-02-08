@@ -8,6 +8,13 @@ Supports two modes:
   - **static**: Same disclosure text on every response (original behaviour).
   - **contextual**: Category-aware disclosures that adapt to the detected
     content category from the policy engine, with multi-language support.
+
+Disclosure methods:
+  - **metadata** (default): Attach to response object, never touch content.
+  - **prepend**: Prepend disclosure text before response.
+  - **first_only**: Prepend only on first message per session_id.
+  - **header**: HTTP headers dict (for FastAPI/Flask middleware).
+  - **none**: Disable disclosure text (just log and audit).
 """
 
 from __future__ import annotations
@@ -184,7 +191,7 @@ class DisclosureManager:
         self,
         system_name: str,
         provider_name: str,
-        method: DisclosureMethod = DisclosureMethod.PREPEND,
+        method: DisclosureMethod = DisclosureMethod.METADATA,
         disclosure_text: str | None = None,
         *,
         mode: str = "static",
@@ -197,6 +204,9 @@ class DisclosureManager:
         self.method = method
         self.mode = mode
         self.language = language
+
+        # Session tracking for FIRST_ONLY mode
+        self._seen_sessions: set[str] = set()
 
         # Build the merged template table ----------------------------------
         # Start from built-in defaults, layer on full-language overrides,
@@ -245,42 +255,35 @@ class DisclosureManager:
         response_text: str,
         interaction_id: str | None = None,
         categories: list[str] | None = None,
-    ) -> str | dict[str, Any]:
+        session_id: str | None = None,
+    ) -> str:
         """
-        Apply AI disclosure to a response.
+        Apply AI disclosure to a response. Always returns a string.
 
         Args:
             response_text: The raw AI response.
             interaction_id: Unique interaction identifier.
             categories: Detected content categories from the policy engine.
-                Used in ``contextual`` mode to select the appropriate
-                disclosure template.
+            session_id: Session identifier (used for FIRST_ONLY mode).
 
         Returns:
-            For PREPEND: string with disclosure prepended.
-            For METADATA: dict with response and metadata.
-            For HEADER: unchanged string (headers handled separately).
+            The response text, possibly with disclosure prepended
+            (PREPEND/FIRST_ONLY modes only). For METADATA/HEADER/NONE,
+            the text is returned unchanged.
         """
-        disclosure_text = self._build_disclosure_text(categories)
-
         if self.method == DisclosureMethod.PREPEND:
+            disclosure_text = self._build_disclosure_text(categories)
             return f"{disclosure_text}\n\n{response_text}"
 
-        if self.method == DisclosureMethod.METADATA:
-            return {
-                "response": response_text,
-                "ai_disclosure": {
-                    "is_ai_generated": True,
-                    "system_name": self.system_name,
-                    "provider_name": self.provider_name,
-                    "interaction_id": interaction_id,
-                    "disclosure_text": disclosure_text,
-                    "language": self.language,
-                    "categories": categories or [],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-            }
+        if self.method == DisclosureMethod.FIRST_ONLY:
+            sid = session_id or "__default__"
+            if sid not in self._seen_sessions:
+                self._seen_sessions.add(sid)
+                disclosure_text = self._build_disclosure_text(categories)
+                return f"{disclosure_text}\n\n{response_text}"
+            return response_text
 
+        # METADATA, HEADER, NONE, CALLBACK: return text unchanged
         return response_text
 
     def _build_disclosure_text(self, categories: list[str] | None = None) -> str:
@@ -311,24 +314,60 @@ class DisclosureManager:
         """Public accessor for the computed disclosure text."""
         return self._build_disclosure_text(categories)
 
-    # ----- HTTP headers / content labeling (unchanged) -------------------
+    # ----- Compliance dict builders --------------------------------------
 
-    def get_http_headers(self, interaction_id: str | None = None) -> dict[str, str]:
+    def build_disclosure_section(
+        self, categories: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Build the disclosure section of the compliance dict."""
+        return {
+            "text": self._build_disclosure_text(categories),
+            "delivered": True,
+            "method": self.method.value,
+            "language": self.language,
+        }
+
+    def build_content_label_section(
+        self,
+        model: str | None = None,
+        interaction_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the content_label section of the compliance dict."""
+        c2pa = self.to_c2pa_assertion(model=model, interaction_id=interaction_id)
+        return {
+            "ai_generated": True,
+            "generator": self.system_name,
+            "provider": self.provider_name,
+            "model": model,
+            "c2pa_assertion": c2pa,
+        }
+
+    # ----- HTTP headers / content labeling -------------------------------
+
+    def get_http_headers(
+        self,
+        interaction_id: str | None = None,
+        categories: list[str] | None = None,
+    ) -> dict[str, str]:
         """
         Get HTTP headers for API-based disclosure (Article 50).
 
         These headers should be included in API responses so downstream
         consumers know the content is AI-generated.
         """
-        return {
+        headers = {
             "X-AI-Generated": "true",
             "X-AI-System": self.system_name,
             "X-AI-Provider": self.provider_name,
+            "X-AI-Disclosure": self._build_disclosure_text(categories),
             "X-AI-Interaction-ID": interaction_id or "",
             "X-AI-Timestamp": datetime.now(timezone.utc).isoformat(),
             "X-AI-Act-Compliant": "true",
             "X-AI-Disclosure-Language": self.language,
         }
+        if categories:
+            headers["X-AI-Content-Categories"] = ",".join(categories)
+        return headers
 
     def create_content_label(
         self,
