@@ -1,10 +1,16 @@
-# 🛡️ AgentGuard
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Sagar-Gogineni/agentguard/main/assets/logo.png" alt="AgentGuard" width="400">
+</p>
 
-**EU AI Act compliance middleware for AI agents. Make any LLM-powered agent legally deployable in Europe with 3 lines of code.**
+<p align="center">
+  <strong>EU AI Act compliance middleware for AI agents.<br>Make any LLM-powered agent legally deployable in Europe with 3 lines of code.</strong>
+</p>
 
-[![PyPI version](https://img.shields.io/pypi/v/agentguard-eu.svg)](https://pypi.org/project/agentguard-eu/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+<p align="center">
+  <a href="https://pypi.org/project/agentguard-eu/"><img src="https://img.shields.io/pypi/v/agentguard-eu.svg" alt="PyPI version"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
+</p>
 
 ---
 
