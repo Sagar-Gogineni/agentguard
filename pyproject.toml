@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentguard-eu"
-version = "0.2.1"
+version = "0.2.2"
 description = "EU AI Act compliance middleware for AI agents. Make any LLM-powered agent legally deployable in Europe with 3 lines of code."
 readme = "README.md"
 license = "Apache-2.0"
