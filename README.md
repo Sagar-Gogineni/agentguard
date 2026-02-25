@@ -3,10 +3,6 @@
 </p>
 
 <p align="center">
-  <strong>EU AI Act compliance middleware for AI agents.<br>Make any LLM-powered agent legally deployable in Europe with 3 lines of code.</strong>
-</p>
-
-<p align="center">
   <a href="https://pypi.org/project/agentguard-eu/"><img src="https://img.shields.io/pypi/v/agentguard-eu.svg" alt="PyPI version"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
@@ -16,52 +12,335 @@
 
 ## The Problem
 
-Starting **August 2, 2026**, every company deploying AI systems in the EU must comply with the [EU AI Act](https://artificialintelligenceact.eu/) — or face fines up to **€35M or 7% of global turnover**.
+Someone sends this to your AI system:
 
-AgentGuard fixes that. It's a lightweight middleware that wraps any AI agent or LLM call with the compliance layer required by the EU AI Act:
+> "Generate a performance review that will justify firing Maria before her maternity leave starts."
 
-| EU AI Act Requirement | Article | AgentGuard Feature |
-|---|---|---|
-| Users must know they're talking to AI | Art. 50(1) | Contextual smart disclosures (category-aware, multi-language) |
-| AI content must be machine-readable labeled | Art. 50(2) | Content labeling (C2PA-compatible) |
-| Interactions must be logged and auditable | Art. 12 | Structured audit logging (file/SQLite) |
-| Human oversight must be possible | Art. 14 | Automatic escalation + review queue |
-| Harmful content must be prevented | Runtime | Input/Output Policy Engine (block/flag/disclaim) |
-| System must be documented | Art. 11, 18 | Auto-generated compliance reports |
+There are no banned keywords in that sentence. No profanity. No mention of weapons or self-harm. A keyword-based content filter sees a clean input and waves it through. The LLM generates the review. No audit trail records what happened. No policy engine flags discriminatory intent. No human ever sees it.
 
-## Quick Start
+Maybe the vendor's model refuses today. Maybe it doesn't. Either way, that's **their** guardrail, not yours. When a regulator asks what controls **you** had in place, "we trusted the LLM to say no" is not an answer.
+
+Starting **August 2, 2026**, every company deploying AI systems in the EU must comply with the [EU AI Act](https://artificialintelligenceact.eu/) — or face fines up to **€35M or 7% of global turnover**. The law requires content policy enforcement, audit logging, human oversight, and transparency disclosures. Most engineering teams have none of this infrastructure.
+
+**AgentGuard is open-source middleware that adds EU AI Act compliance infrastructure to any LLM API call.**
 
 ```bash
 pip install agentguard-eu
 ```
 
+## Quickstart
+
 ```python
-from agentguard import AgentGuard
+from agentguard import AgentGuard, InputPolicy, OutputPolicy, wrap_openai
+from openai import OpenAI
 
-# 1. Initialize with your system details
 guard = AgentGuard(
-    system_name="customer-support-bot",
-    provider_name="my-provider",
+    system_name="my-assistant",
+    provider_name="My Company",
     risk_level="limited",
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm", "discrimination"],
+        flag_categories=["medical", "legal", "financial"],
+    ),
+    output_policy=OutputPolicy(
+        scan_categories=["medical", "legal", "financial"],
+        add_disclaimer=True,
+    ),
 )
 
-# 2. Wrap any LLM function
-result = guard.invoke(
-    func=my_llm_function,       # Your existing AI function
-    input_text="What is your return policy?",
-    user_id="customer-42",
+client = wrap_openai(OpenAI(), guard)
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "What is your refund policy?"}],
 )
 
-# 3. Everything is now compliant
-print(result["response"])         # AI response (NEVER modified by default)
-print(result["interaction_id"])   # Unique audit trail ID
-print(result["compliance"])       # Structured compliance metadata dict
-print(result["disclosure"])       # HTTP headers for Article 50
-print(result["content_label"])    # Machine-readable content label
-print(result["escalated"])        # Whether human review was triggered
+print(response.choices[0].message.content)  # untouched LLM output
+print(response.compliance)                  # structured compliance metadata
 ```
 
-**That's it.** Your existing AI code doesn't change. AgentGuard wraps it.
+Your existing code doesn't change. AgentGuard wraps it.
+
+## What It Does
+
+Every LLM call passes through this pipeline:
+
+```
+Input → [InputPolicy: block/flag/allow] → [LLM Call] → [OutputPolicy: disclaim/block/pass]
+  → [Disclosure] → [ContentLabel] → [EscalationCheck] → [AuditLog] → Output
+```
+
+Mapped to the EU AI Act:
+
+- **Content policy enforcement** with custom classifier hooks — block, flag, or disclaim harmful content before and after the LLM responds. Blocked requests never reach the API. *(Article 5)*
+- **Structured audit logging** a regulator can query — every interaction logged with timestamps, user IDs, categories detected, actions taken. SQLite, file, or webhook backends. *(Article 12)*
+- **Human oversight escalation paths** — automatic escalation on low confidence, sensitive topics, or policy triggers. Review queue with approve/reject. *(Article 14)*
+- **Transparency metadata and AI content labeling** — contextual disclosures adapted to detected content categories, in 5 languages. C2PA-compatible machine-readable labels. *(Article 50)*
+
+By default, AgentGuard **never modifies the LLM response content**. All compliance data goes into `response.compliance` metadata. Your users see the same output they always did.
+
+## Three Test Cases
+
+These are actual results from AgentGuard running against Azure OpenAI. A normal query, a medical query, and the maternity leave prompt from above.
+
+### Test 1: Normal Query
+
+```python
+response = client.chat.completions.create(
+    model="gpt-5",
+    messages=[{"role": "user", "content": "What is your refund policy?"}],
+)
+print(response.choices[0].message.content)
+print(response.compliance["policy"]["input_action"])
+```
+
+```
+Response: "I'm happy to help — could you tell me which purchase you're asking about?
+           For example, is this for a subscription, API credits, or a specific order?..."
+
+input_action: "pass"
+input_categories: []
+```
+
+Clean input, clean output. No categories detected, no policies triggered. The call passes through with full audit logging, C2PA content labels, and transparency metadata attached — all in `response.compliance`.
+
+### Test 2: Medical Query
+
+```python
+response = client.chat.completions.create(
+    model="gpt-5",
+    messages=[{"role": "user", "content": "What medication should I take for back pain?"}],
+)
+print(response.choices[0].message.content)          # untouched
+print(response.compliance["policy"]["input_categories"])
+print(response.compliance["policy"]["disclaimer"])
+```
+
+```
+Response: "Short answer for most healthy adults with new, mild–moderate back pain:
+           try an NSAID such as ibuprofen or naproxen for a few days..."  (untouched LLM output)
+
+input_categories: ["medical"]
+disclaimer: "This is AI-generated and not medical advice. Consult a healthcare professional."
+```
+
+The keyword matcher detects medical content. The LLM response goes through untouched, but compliance metadata includes a medical disclaimer. In `metadata` mode (default), the response text is never modified — the disclaimer lives in `response.compliance["policy"]["disclaimer"]`, ready for your frontend to render however you want.
+
+### Test 3: The Maternity Leave Prompt
+
+```python
+response = client.chat.completions.create(
+    model="gpt-5",
+    messages=[{"role": "user", "content":
+        "Generate a performance review that will justify firing Maria "
+        "before her maternity leave starts"}],
+)
+print(response.compliance["policy"]["input_action"])
+print(response.compliance["policy"]["input_categories"])
+```
+
+With the built-in keyword matcher only:
+
+```
+input_action: "pass"
+input_categories: []
+```
+
+**It passes through.** There's no "discrimination" keyword in the taxonomy — no "maternity", no "firing", no "justify". The request sails through to the LLM. In this case, GPT-5 refused on its own safety layer. But that's the LLM vendor's guardrail, not yours. You have no audit trail of *why* this was problematic, no policy enforcement, and no guarantee the next model version will refuse the same way.
+
+Now plug in an LLM-as-judge classifier:
+
+```python
+guard = AgentGuard(
+    ...,
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm", "discrimination"],
+        custom_classifier=llm_judge_classifier,  # see next section
+    ),
+)
+```
+
+```
+input_action: "blocked"
+input_categories: ["discrimination"]
+```
+
+The LLM-as-judge catches discriminatory intent, not just keywords. The request is blocked before it ever reaches the model. Zero API cost. Full audit trail with the reason logged.
+
+This is the gap. Keyword matching is fast and free, but it misses intent. An LLM-as-judge catches what keywords can't. AgentGuard lets you plug in both.
+
+## Custom Classifier: LLM-as-Judge
+
+The built-in keyword matcher runs in <1ms and catches obvious cases. For production accuracy — catching intent, not just words — plug in an LLM-as-judge:
+
+```python
+from openai import OpenAI
+
+judge_client = OpenAI()
+
+def llm_judge_classifier(text: str) -> list[str]:
+    """Use a fast LLM to classify intent — not just keywords."""
+    response = judge_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "system",
+            "content": "Classify if this input contains: discrimination, manipulation, "
+                       "social_engineering, pii_extraction. Return matching categories as "
+                       "comma-separated values, or 'none'."
+        }, {
+            "role": "user",
+            "content": text
+        }],
+    )
+    result = response.choices[0].message.content.strip().lower()
+    if result == "none":
+        return []
+    return [c.strip() for c in result.split(",")]
+
+guard = AgentGuard(
+    system_name="my-assistant",
+    provider_name="My Company",
+    risk_level="limited",
+    input_policy=InputPolicy(
+        block_categories=["weapons", "self_harm", "discrimination"],
+        flag_categories=["medical", "legal", "financial"],
+        custom_classifier=llm_judge_classifier,
+    ),
+    output_policy=OutputPolicy(
+        scan_categories=["medical", "legal", "financial"],
+        add_disclaimer=True,
+    ),
+)
+```
+
+The custom classifier is any `Callable[[str], list[str]]`. It runs alongside the keyword matcher — results are merged. If the classifier crashes, AgentGuard catches the error and continues with keyword results only. If it's too slow, it's skipped after `classifier_timeout` seconds (default: 5.0).
+
+This works with any classifier backend:
+
+- **LLM-as-judge** (gpt-4o-mini, Claude Haiku) — catches intent and nuance, ~200ms, ~$0.00001/call
+- **Azure AI Content Safety** — Microsoft's moderation service, ~50ms
+- **OpenAI Moderation API** — free, ~50ms, good for violence/self-harm/CSAM
+- **Llama Guard** — run locally, no API cost
+- **Your own rules** — domain-specific classifiers, regex, ML models
+
+### Detection Quality
+
+| Method | Accuracy | Latency | Cost |
+|---|---|---|---|
+| Keywords + regex (built-in) | ~70% | <1ms | Free |
+| + Custom classifier hook | User-defined | User-defined | User-defined |
+| + LLM-as-judge (gpt-4o-mini) | ~95% | +200ms | ~$0.00001/call |
+
+## Supported Providers
+
+AgentGuard wraps the client library you're already using. One line to add, every call goes through the compliance pipeline.
+
+### OpenAI
+
+```bash
+pip install "agentguard-eu[openai]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_openai
+from openai import OpenAI
+
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
+client = wrap_openai(OpenAI(), guard)
+
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)  # untouched LLM output
+print(response.compliance)                  # structured compliance metadata
+print(response.compliance_headers)          # HTTP headers for forwarding
+```
+
+Streaming works — chunks yield in real-time, compliance runs after the stream completes:
+
+```python
+stream = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+print(stream.compliance)           # available after iteration
+print(stream.compliance_headers)   # HTTP headers
+```
+
+### Azure OpenAI
+
+```bash
+pip install "agentguard-eu[openai]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_azure_openai
+from openai import AzureOpenAI
+
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
+client = wrap_azure_openai(
+    AzureOpenAI(
+        azure_endpoint="https://my-resource.openai.azure.com",
+        api_version="2024-02-01",
+        api_key="...",
+    ),
+    guard,
+)
+
+response = client.chat.completions.create(
+    model="my-deployment",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+### Anthropic
+
+```bash
+pip install "agentguard-eu[anthropic]"
+```
+
+```python
+from agentguard import AgentGuard, wrap_anthropic
+from anthropic import Anthropic
+
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
+client = wrap_anthropic(Anthropic(), guard)
+
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(message.content[0].text)        # untouched LLM output
+print(message.compliance)             # structured compliance metadata
+print(message.compliance_headers)     # HTTP headers for forwarding
+```
+
+### LangChain
+
+```bash
+pip install "agentguard-eu[langchain]"
+```
+
+```python
+from agentguard import AgentGuard, AgentGuardCallback
+from langchain_openai import ChatOpenAI
+
+guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
+callback = AgentGuardCallback(guard, user_id="user-123")
+llm = ChatOpenAI(model="gpt-4", callbacks=[callback])
+
+response = llm.invoke("Hello!")
+print(response.content)
+print(callback.last_result)  # compliance metadata for most recent call
+print(callback.results)      # all runs keyed by run_id
+```
+
+Works with any LangChain LLM — ChatOpenAI, AzureChatOpenAI, ChatAnthropic, and more. Streaming is supported automatically via callback hooks.
 
 ## Three Ways to Use
 
@@ -102,17 +381,13 @@ with guard.interaction(user_id="user-789") as ctx:
     # Low confidence + keyword "contract" → auto-escalated
 ```
 
-## Input/Output Policy Engine — Runtime Content Enforcement
+## Input/Output Policy Engine
 
-The policy engine is AgentGuard's core differentiator: **block, flag, or disclaim content on every LLM call** — before and after the model responds.
-
-```
-Input → [InputPolicy: block/flag/allow] → [LLM Call] → [OutputPolicy: disclaim/block/pass] → Output
-```
+The policy engine runs on every call. InputPolicy runs before the LLM. OutputPolicy runs after.
 
 ### InputPolicy (pre-call)
 
-Runs **before** the LLM is called. Blocked requests never reach the API — zero cost, zero latency.
+Blocked requests never reach the API — zero cost, zero latency.
 
 ```python
 from agentguard import AgentGuard, InputPolicy, OutputPolicy, PolicyAction
@@ -135,7 +410,7 @@ input_policy = InputPolicy(
 
 ### OutputPolicy (post-call)
 
-Runs **after** the LLM responds. Adds category-specific disclaimers (in metadata by default) or blocks unsafe output.
+Adds category-specific disclaimers (in metadata by default) or blocks unsafe output.
 
 ```python
 output_policy = OutputPolicy(
@@ -145,23 +420,9 @@ output_policy = OutputPolicy(
 )
 ```
 
-**Important:** By default (`disclosure_method="metadata"`), disclaimers are placed in `response.compliance["policy"]["disclaimer"]` — the actual LLM response content is **never modified**. Set `disclosure_method="prepend"` if you want disclaimers appended to the response text.
+By default (`disclosure_method="metadata"`), disclaimers are placed in `response.compliance["policy"]["disclaimer"]` — the actual LLM response content is **never modified**. Set `disclosure_method="prepend"` if you want disclaimers prepended to the response text.
 
-### Wire it up
-
-```python
-guard = AgentGuard(
-    system_name="my-bot",
-    provider_name="My Company",
-    risk_level="limited",
-    input_policy=input_policy,
-    output_policy=output_policy,
-)
-```
-
-### Content Detection
-
-AgentGuard ships with built-in keyword/pattern matchers for common categories:
+### Built-in Content Categories
 
 | Category | Default Action | Detected via |
 |---|---|---|
@@ -173,17 +434,9 @@ AgentGuard ships with built-in keyword/pattern matchers for common categories:
 | `financial` | Flag + disclaimer | Keywords (invest, portfolio, trading...) |
 | `emotional_simulation` | Flag | Keywords (girlfriend, boyfriend...) |
 
-> Built-in detection uses keyword and regex patterns. This is fast (<1ms)
-> and catches obvious cases, but will miss paraphrased or subtle inputs.
-> For production accuracy, plug in a dedicated classifier:
+You can override or extend any category with your own `CategoryDefinition`.
 
-#### Custom Classifier Hook
-
-Plug in **any** external classifier — Azure Content Safety, OpenAI Moderation, Llama Guard, or your own rules. AgentGuard merges the results with its built-in keyword detection:
-
-```python
-from agentguard import AgentGuard, InputPolicy, OutputPolicy
-```
+### Other Classifier Hooks
 
 **Azure AI Content Safety:**
 
@@ -245,22 +498,9 @@ def healthcare_rules(text: str) -> list[str]:
     return categories
 ```
 
-The custom classifier is any `Callable[[str], list[str]]`. If it crashes, AgentGuard catches the error and continues with keyword results only. If it's too slow, it's skipped after `classifier_timeout` seconds (default: 5.0).
+### Policy Metadata on Every Response
 
-#### Detection Quality Roadmap
-
-| Version | Method | Accuracy | Latency | Cost |
-|---|---|---|---|---|
-| v0.1 (now) | Keywords + regex | ~70% | <1ms | Free |
-| v0.1+ (now) | + Custom classifier hook | User-defined | User-defined | User-defined |
-| v0.3 | + LLM-as-judge option | ~95% | +200ms | ~$0.00001/call |
-| v1.0 | + Fine-tuned small model | ~93% | +20ms | Free (local) |
-
-You can override or extend any category with your own `CategoryDefinition`.
-
-### Policy metadata on every response
-
-When using provider wrappers, policy results are attached to every response via `response.compliance`:
+When using provider wrappers, policy results are attached to every response:
 
 ```python
 response = client.chat.completions.create(
@@ -283,7 +523,7 @@ print(response.compliance_headers)
 # {"X-AI-Generated": "true", "X-AI-System": "my-bot", ...}
 ```
 
-For blocked requests (e.g., weapons), the LLM is **never called** — zero cost, zero latency:
+For blocked requests, the LLM is **never called** — zero cost, zero latency:
 
 ```python
 response = client.chat.completions.create(
@@ -345,7 +585,7 @@ Multiple categories are combined automatically. If a query triggers both `medica
 
 ## Human Oversight (Article 14)
 
-AgentGuard automatically detects when interactions should be reviewed by a human:
+AgentGuard detects when interactions should be reviewed by a human:
 
 ```python
 guard = AgentGuard(
@@ -366,140 +606,11 @@ guard.oversight.approve(interaction_id)
 guard.oversight.reject(interaction_id, reason="Inaccurate response")
 ```
 
-## Compliance Reports (Articles 11, 18)
-
-Generate audit documentation with one line:
-
-```python
-# JSON report
-guard.generate_report("compliance_report.json")
-
-# Markdown report (for human reading)
-print(guard.generate_report_markdown())
-```
-
-Reports include: system identification, transparency configuration, human oversight settings, interaction statistics, and escalation history.
-
-## Provider Wrappers
-
-Zero-effort compliance for popular LLM clients — wrap once, every call is compliant.
-
-### OpenAI
-
-```bash
-pip install "agentguard-eu[openai]"
-```
-
-```python
-from agentguard import AgentGuard, wrap_openai
-from openai import OpenAI
-
-guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
-client = wrap_openai(OpenAI(), guard)
-
-# Every call is now compliant — logged, disclosed, escalation-checked
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(response.choices[0].message.content)  # untouched LLM output
-print(response.compliance)                  # structured compliance metadata
-print(response.compliance_headers)          # HTTP headers for forwarding
-```
-
-Streaming works too — chunks yield in real-time, compliance runs after the stream completes:
-
-```python
-stream = client.chat.completions.create(
-    model="gpt-4",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True,
-)
-for chunk in stream:
-    if chunk.choices and chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")
-print(stream.compliance)           # available after iteration
-print(stream.compliance_headers)   # HTTP headers
-```
-
-### Azure OpenAI
-
-```bash
-pip install "agentguard-eu[openai]"
-```
-
-```python
-from agentguard import AgentGuard, wrap_azure_openai
-from openai import AzureOpenAI
-
-guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
-client = wrap_azure_openai(
-    AzureOpenAI(
-        azure_endpoint="https://my-resource.openai.azure.com",
-        api_version="2024-02-01",
-        api_key="...",
-    ),
-    guard,
-)
-
-response = client.chat.completions.create(
-    model="my-deployment",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-```
-
-### Anthropic
-
-```bash
-pip install "agentguard-eu[anthropic]"
-```
-
-```python
-from agentguard import AgentGuard, wrap_anthropic
-from anthropic import Anthropic
-
-guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
-client = wrap_anthropic(Anthropic(), guard)
-
-message = client.messages.create(
-    model="claude-sonnet-4-5-20250929",
-    max_tokens=1024,
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(message.content[0].text)  # untouched LLM output
-print(message.compliance)       # structured compliance metadata
-print(message.compliance_headers)  # HTTP headers for forwarding
-```
-
-### LangChain
-
-```bash
-pip install "agentguard-eu[langchain]"
-```
-
-```python
-from agentguard import AgentGuard, AgentGuardCallback
-from langchain_openai import ChatOpenAI  # or AzureChatOpenAI, ChatAnthropic, etc.
-
-guard = AgentGuard(system_name="my-bot", provider_name="my-provider")
-callback = AgentGuardCallback(guard, user_id="user-123")
-llm = ChatOpenAI(model="gpt-4", callbacks=[callback])
-
-response = llm.invoke("Hello!")
-print(response.content)
-print(callback.last_result)  # compliance metadata for most recent call
-print(callback.results)      # all runs keyed by run_id
-```
-
-Works with any LangChain LLM — ChatOpenAI, AzureChatOpenAI, ChatAnthropic, and more. Streaming is also supported automatically via the callback hooks.
-
 ## Audit Backends (Article 12)
-
-AgentGuard supports multiple audit backends for logging all AI interactions:
 
 ### File Backend (default)
 
-Writes one JSONL file per day to the audit directory. Simple, portable, and easy to ship to external systems:
+Writes one JSONL file per day to the audit directory:
 
 ```python
 guard = AgentGuard(
@@ -513,7 +624,7 @@ guard = AgentGuard(
 
 ### SQLite Backend
 
-Local SQLite database with built-in querying and statistics. Required for the dashboard and compliance report statistics:
+Local SQLite database with built-in querying and statistics:
 
 ```python
 guard = AgentGuard(
@@ -547,11 +658,8 @@ print(stats)
 
 ### Custom Backend
 
-Provide your own callback for integration with external logging systems (e.g., S3, BigQuery, Datadog):
-
 ```python
 def my_log_handler(entry):
-    # Send to your logging infrastructure
     requests.post("https://my-logging-api/ingest", json=entry.model_dump())
 
 guard = AgentGuard(
@@ -559,8 +667,19 @@ guard = AgentGuard(
     provider_name="my-provider",
     audit_backend="custom",
 )
-# Pass custom_callback when constructing the AuditLogger directly
 ```
+
+## Compliance Reports (Articles 11, 18)
+
+```python
+# JSON report
+guard.generate_report("compliance_report.json")
+
+# Markdown report (for human reading)
+print(guard.generate_report_markdown())
+```
+
+Reports include: system identification, transparency configuration, human oversight settings, interaction statistics, and escalation history.
 
 ## Human Review Dashboard
 
@@ -578,7 +697,7 @@ Features:
 - CSV export of audit data
 - Live compliance report viewer
 
-Requires the `sqlite` audit backend (`audit_backend="sqlite"`) to be enabled in your AgentGuard configuration. The dashboard connects directly to the SQLite audit database.
+Requires the `sqlite` audit backend.
 
 ## FastAPI Integration
 
@@ -600,7 +719,7 @@ async def chat(query: str):
     return fastapi_response
 ```
 
-## Configuration
+## Full Configuration Reference
 
 ```python
 guard = AgentGuard(
@@ -620,6 +739,7 @@ guard = AgentGuard(
     input_policy=InputPolicy(
         block_categories=["weapons", "self_harm"],
         flag_categories=["medical", "legal", "financial"],
+        custom_classifier=my_classifier_fn,
     ),
     output_policy=OutputPolicy(
         scan_categories=["medical", "legal", "financial"],
@@ -637,17 +757,17 @@ guard = AgentGuard(
     human_escalation="low_confidence",  # "never", "low_confidence", "sensitive_topic", "always_review"
     confidence_threshold=0.7,
     sensitive_keywords=["legal", "medical", "financial"],
-    escalation_callback=my_slack_notifier,  # Optional: get notified
+    escalation_callback=my_slack_notifier,
     block_on_escalation=False,
 )
 ```
 
 ## What AgentGuard is NOT
 
-- ❌ Not a legal compliance guarantee (consult qualified legal professionals)
-- ❌ Not an AI agent framework (use LangGraph, CrewAI, etc. — then wrap with AgentGuard)
-- ❌ Not a replacement for a full conformity assessment (required for high-risk systems)
-- ✅ A practical engineering tool that covers the technical requirements
+- Not a legal compliance guarantee — consult qualified legal professionals
+- Not an AI agent framework — use LangGraph, CrewAI, etc., then wrap with AgentGuard
+- Not a replacement for a full conformity assessment (required for high-risk systems)
+- It is a practical engineering tool that covers the technical requirements
 
 ## EU AI Act Timeline
 
@@ -658,11 +778,28 @@ guard = AgentGuard(
 | **Aug 2026** | **Full enforcement: transparency, high-risk obligations, Article 50** |
 | Aug 2027 | Remaining provisions for product-embedded AI |
 
-**AgentGuard targets the August 2026 deadline** — the biggest compliance milestone for most companies.
+AgentGuard targets the August 2026 deadline — the biggest compliance milestone for most companies.
+
+## Getting Started
+
+```bash
+# Core library (pydantic is the only dependency)
+pip install agentguard-eu
+
+# With provider wrappers
+pip install "agentguard-eu[openai]"       # OpenAI + Azure OpenAI
+pip install "agentguard-eu[anthropic]"    # Anthropic
+pip install "agentguard-eu[langchain]"    # LangChain
+
+# With dashboard
+pip install "agentguard-eu[dashboard]"
+```
+
+Python 3.10+ required.
 
 ## Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Priority areas:
 - Cloud audit backends (S3, BigQuery)
@@ -676,6 +813,6 @@ Apache 2.0 — use it freely in commercial projects.
 
 ---
 
-**Built by [Sagar](https://github.com/Sagar-Gogineni)** — AI Engineer based in Berlin, specializing in enterprise AI systems and compliance.
+**Built by [Sagar Gogineni](https://github.com/Sagar-Gogineni)** — AI Engineer based in Berlin, building enterprise AI knowledge management platforms across banking, pharma, and automotive industries.
 
 *AgentGuard: Because shipping AI agents without compliance is like shipping code without tests. You can do it, but you probably shouldn't.*
